@@ -1,0 +1,26 @@
+{
+  "name": "music-understanding-demo",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/link-models.mjs && vite",
+    "build": "node scripts/link-models.mjs && vite build",
+    "build:space": "node scripts/build-space.mjs",
+    "preview": "vite preview",
+    "link-models": "node scripts/link-models.mjs",
+    "verify": "node scripts/verify.mjs",
+    "models": "node scripts/link-models.mjs --list",
+    "verify-dbn": "node scripts/verify-dbn.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "onnxruntime-web": "^1.29.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^6.0.5"
+  }
+}

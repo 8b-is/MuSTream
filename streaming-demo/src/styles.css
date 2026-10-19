@@ -1,0 +1,156 @@
+@import url("https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Inter:wght@400;500;600;700&display=swap");
+
+:root { font-family: Inter, system-ui, sans-serif; color:#e8eaf0; background:#090b10; font-synthesis:none; }
+* { box-sizing:border-box; }
+body { margin:0; min-width:320px; background:radial-gradient(circle at 50% 0%,#171b27 0,#090b10 52%); }
+button,input { font:inherit; }
+.page { min-height:100vh; padding:52px 20px; }
+.shell { width:min(980px,100%); margin:0 auto; }
+.home-shell { padding-top:5vh; }
+.home-hero { max-width:760px; margin:0 auto 34px; text-align:center; }
+.eyebrow { display:flex; align-items:center; gap:7px; font:500 12px "DM Mono",monospace; letter-spacing:.12em; color:#8d96aa; margin-bottom:12px; }
+.home-hero .eyebrow { justify-content:center; }
+h1 { font-size:clamp(30px,5vw,48px); line-height:1.04; letter-spacing:-.045em; margin:0 0 13px; }
+.home-hero p,.header p { color:#9098aa; line-height:1.65; margin:0 auto; max-width:650px; }
+.task-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.task-card { position:relative; text-align:left; background:#10131a; border:1px solid #262c38; border-radius:16px; color:inherit; padding:22px; min-height:170px; cursor:pointer; transition:transform .16s,border-color .16s,background .16s; }
+.task-card:hover { transform:translateY(-2px); border-color:#404858; background:#141821; }
+.task-card.featured { grid-column:span 2; min-height:150px; }
+.task-icon { width:42px; height:42px; display:grid; place-items:center; border:1px solid #303747; border-radius:11px; margin-bottom:25px; }
+.task-title { font-weight:650; font-size:16px; }
+.task-desc { color:#7d8798; font-size:12px; line-height:1.55; margin-top:7px; max-width:430px; }
+.task-arrow { position:absolute; right:20px; bottom:20px; color:#9ba4b4; font:500 11px "DM Mono",monospace; }
+.home-note { margin:15px 2px; color:#687183; font:400 11px "DM Mono",monospace; text-align:center; }
+.live-dot { display:inline-block; vertical-align:middle; margin-right:6px; background:#cbd3df; box-shadow:0 0 10px #adb8c8; }
+
+.header { display:flex; justify-content:space-between; gap:28px; align-items:flex-start; margin-bottom:30px; }
+.header-left { min-width:0; }
+.header-left .eyebrow { margin-top:18px; }
+.back-button { background:none; border:none; color:#7d8798; padding:0; cursor:pointer; font-size:12px; }
+.status-pill { display:flex; align-items:center; gap:8px; border:1px solid #272c38; background:#10131a; border-radius:999px; padding:9px 13px; color:#a5adbd; font:500 12px "DM Mono",monospace; white-space:nowrap; }
+.status-pill.live { color:#dfe4ec; border-color:#3c4657; }
+.dot { width:7px; height:7px; border-radius:50%; background:#6f788a; }
+.live .dot { background:#dce3ee; box-shadow:0 0 12px #bfc8d8; }
+
+.metrics-grid { display:grid; gap:12px; }
+/* A single-task page has one readout, so give it the whole row and centre it
+   rather than leaving a dead column beside it. */
+.metrics-grid.one { grid-template-columns:1fr; }
+.metrics-grid.one .metric-card { text-align:center; }
+.metrics-grid.two { grid-template-columns:1.2fr .8fr; }
+.metrics-grid.three { grid-template-columns:repeat(3,1fr); }
+.metric-card { border:1px solid #292f3c; background:linear-gradient(145deg,#121621,#0d1017); border-radius:18px; padding:28px; min-height:185px; }
+.hero-metric { text-align:center; }
+.metric-kicker { color:#737c8e; font:500 11px "DM Mono",monospace; letter-spacing:.16em; }
+.metric-value { font-size:48px; line-height:1.05; font-weight:700; letter-spacing:-.055em; margin:18px 0 12px; }
+.metric-value.chord { font-size:clamp(54px,8vw,82px); }
+.metric-value small { font-size:15px; letter-spacing:0; color:#818a9b; font-family:"DM Mono",monospace; }
+.confidence { display:inline-flex; gap:7px; align-items:center; color:#aab2c0; font:500 12px "DM Mono",monospace; }
+
+.panel { margin-top:16px; border:1px solid #252b37; background:#0f1219; border-radius:16px; overflow:hidden; }
+.panel-head { display:flex; justify-content:space-between; padding:15px 18px; border-bottom:1px solid #202530; font-size:13px; color:#b6bdca; }
+.small-muted { color:#6f7889; font-family:"DM Mono",monospace; font-size:11px; }
+.timeline { min-height:116px; padding:18px; display:flex; align-items:center; gap:8px; overflow-x:auto; }
+.event { min-width:96px; padding:14px 15px; border:1px solid #2a303d; background:#141821; border-radius:10px; }
+.event strong { display:block; font-size:15px; margin-bottom:7px; }
+.event span { color:#687183; font:400 10px "DM Mono",monospace; }
+.empty { width:100%; text-align:center; color:#616a7b; font-size:13px; }
+.empty.padded { min-height:105px; display:grid; place-items:center; }
+
+/* The beat strip: a ruler that scrolls under a fixed playhead, ticks placed at
+   the times the model reported. The layer is moved by one transform per frame
+   (see BeatStrip), so nothing here may transition. */
+.strip-view { position:relative; height:96px; overflow:hidden; }
+.strip-layer { position:absolute; top:0; bottom:0; width:0; will-change:transform; }
+.strip-tick { position:absolute; top:34px; height:30px; width:2px; margin-left:-1px; border-radius:1px; background:#4a5468; }
+.strip-tick.downbeat { top:18px; height:52px; width:3px; margin-left:-1.5px; background:#c3ccdb; box-shadow:0 0 10px #7c8798; }
+/* The beat's position in its bar, which only the DBN knows. */
+.strip-tick i { position:absolute; top:100%; left:50%; transform:translateX(-50%); margin-top:7px; font:400 10px "DM Mono",monospace; font-style:normal; color:#5d6678; }
+.strip-tick.downbeat i { color:#aab3c2; }
+.strip-playhead { position:absolute; top:10px; bottom:28px; width:1px; background:#e2e5ea; box-shadow:0 0 12px #9aa5b6; }
+    .strip-playhead::after { content:""; position:absolute; top:-4px; left:-3px; width:7px; height:7px; border-radius:50%; background:#e2e5ea; }
+
+/* Decoder controls in a panel head: native selects, styled to read as part of the
+   panel's muted metadata line rather than as a form. */
+.panel-controls { display:flex; gap:16px; align-items:center; }
+/* Name the control next to it rather than inside the option text: the label stays put
+   while the value changes, so what is set is readable without opening the menu. */
+.control { display:inline-flex; align-items:center; gap:8px; }
+.control-label { font:650 12.5px Inter,system-ui,sans-serif; color:#e6eaf1; letter-spacing:-.005em; white-space:nowrap; }
+.control-label::after { content:":"; color:#78829a; }
+.panel-controls select { appearance:none; border:1px solid #3b4455; background:#1b212c; color:#e2e6ee;
+  border-radius:8px; padding:8px 30px 8px 12px; font:500 12px "DM Mono",monospace; cursor:pointer;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%2398a1b2' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat; background-position:right 11px center; transition:border-color .15s,background-color .15s; }
+.panel-controls select:hover:enabled { border-color:#5a6577; background-color:#222936; }
+.panel-controls select:focus-visible { outline:2px solid #6f7d94; outline-offset:1px; }
+.panel-controls select:disabled { opacity:.45; cursor:not-allowed; }
+
+.key-history { min-height:104px; padding:18px; display:flex; align-items:center; gap:8px; overflow-x:auto; }
+.key-badge { border:1px solid #2a303d; background:#141821; border-radius:10px; padding:14px 15px; white-space:nowrap; }
+.key-badge.current { border-color:#4a5468; background:#191e28; }
+.key-badge strong { display:block; font-size:17px; font-weight:650; margin-bottom:7px; }
+.key-badge strong span { color:#8d96aa; font-size:12px; font-weight:500; }
+.key-badge > span { color:#687183; font:400 10px "DM Mono",monospace; }
+
+/* One flash per detected beat: the element is re-keyed on the beat count, so
+   re-mounting restarts the animation. */
+.pulse-dot { width:8px; height:8px; border-radius:50%; background:#3b4352; animation:beat-flash .5s ease-out; }
+.pulse-dot.strong { animation-duration:.75s; }
+@keyframes beat-flash {
+  0% { background:#e8eaf0; box-shadow:0 0 14px #b8c2d2; transform:scale(1.5); }
+  100% { background:#3b4352; box-shadow:none; transform:scale(1); }
+}
+
+.panel-foot { padding:16px 18px; border-top:1px solid #202530; font-size:12.5px; line-height:1.7; color:#98a1b2; }
+.panel-foot p { margin:0 0 9px; }
+.panel-foot p:last-child { margin-bottom:0; }
+.panel-foot strong { color:#e6eaf1; font-weight:650; }
+.panel-foot em { color:#cfd6e2; font-style:normal; font-family:"DM Mono",monospace; font-size:12px; }
+.panel-foot code { color:#cfd6e2; }
+
+.player { padding:20px; }
+.file-row { display:flex; align-items:center; gap:12px; }
+.file-icon { width:40px; height:40px; display:grid; place-items:center; border:1px solid #2b313e; border-radius:10px; color:#b9c1cf; }
+.file-meta { flex:1; min-width:0; }
+.file-meta strong,.file-meta span { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.file-meta strong { font-size:13px; margin-bottom:4px; }
+.file-meta span { color:#697284; font-size:11px; }
+.progress-wrap { margin:24px 0 17px; }
+.progress { height:5px; border-radius:10px; background:#252b36; overflow:hidden; }
+.progress > div { height:100%; background:#d5dae3; border-radius:inherit; transition:width .12s linear; }
+.time-row { display:flex; justify-content:space-between; color:#687183; font:400 10px "DM Mono",monospace; margin-top:8px; }
+.controls { display:flex; flex-wrap:wrap; gap:9px; }
+.button { display:inline-flex; align-items:center; justify-content:center; gap:9px; border:1px solid #3b4455; border-radius:10px; padding:12px 18px; color:#e6eaf1; cursor:pointer; font-size:13.5px; font-weight:600; letter-spacing:-.005em; transition:background-color .15s,border-color .15s,transform .1s; }
+.button:hover:enabled { transform:translateY(-1px); }
+.button:focus-visible { outline:2px solid #6f7d94; outline-offset:2px; }
+.button:disabled { opacity:.35; cursor:not-allowed; }
+.primary { background:#e2e5ea; color:#0b0d12; border-color:#e2e5ea; }
+.secondary { background:#1b212c; }
+.secondary:hover:enabled { background:#232b38; border-color:#5a6577; }
+.primary:hover:enabled { background:#f2f4f7; }
+.danger { background:#14171e; color:#c0c6d1; }
+.footer { display:flex; flex-wrap:wrap; gap:20px; margin:17px 2px; color:#687183; font:400 10px "DM Mono",monospace; }
+.footer div { display:flex; align-items:center; gap:6px; }
+.footer strong { color:#aeb5c2; font-weight:500; }
+
+@media (max-width: 760px) {
+  .page { padding:30px 14px; }
+  .task-grid,.metrics-grid.two,.metrics-grid.three { grid-template-columns:1fr; }
+  .task-card.featured { grid-column:auto; }
+  .header { flex-direction:column; }
+  .status-pill { align-self:flex-start; }
+  .metric-card { min-height:155px; }
+  /* File name on its own line, Try a sample + Upload sharing the next. */
+  .file-row { flex-wrap:wrap; }
+  .file-meta { flex-basis:calc(100% - 52px); }
+  .file-row .button { flex:1; white-space:nowrap; }
+  .controls .button { flex:1; }
+}
+
+.badge { display:inline-block; margin-left:8px; padding:3px 7px; border:1px solid #333b4a; border-radius:6px; color:#7d8798; font:400 9px "DM Mono",monospace; letter-spacing:.08em; text-transform:uppercase; vertical-align:middle; }
+.muted-note { color:#6f7889; font-size:11px; line-height:1.5; text-align:left; align-items:flex-start; }
+.muted-note svg { flex:0 0 auto; margin-top:2px; }
+.model-panel .model-progress { margin:18px; }
+.model-panel code { color:#aeb5c2; font-family:"DM Mono",monospace; font-size:11px; }
+.event.current { border-color:#4a5468; background:#191e28; }

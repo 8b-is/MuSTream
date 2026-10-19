@@ -1,0 +1,102 @@
+# Causal streaming MERT beat/downbeat tracking (train_streaming.py / infer_streaming.py).
+
+# data: audio_dir/<id>.<ext> + annotation_dir/<id>/beat.lab; ids come from split_dir/{train,val,test}.txt
+audio_dir:            path/to/audio
+annotation_dir:       path/to/annotations
+split_dir:            data_splits/splits
+audio_ext:            wav
+
+train_ratio:          0.8          # only used to auto-build a split when split_dir has none
+val_ratio:            0.1          # only used to auto-build a split when split_dir has none
+split_seed:           42           # only used to auto-build a split when split_dir has none
+crop_duration:        10.0         # training crop length, seconds
+target_widen:         1        # widen each labeled frame by +/- this many frames (0 = single hard frame)
+
+# infer_streaming.py only. Default: genuine streaming, one session fed chunk by chunk
+# (results are chunk-size independent; chunk size only trades speed).
+# stream_chunk_duration (seconds) takes priority over stream_chunk_frames (raw 75 fps frames).
+stream_chunk_duration: 4.0   # fast offline eval
+# stream_chunk_frames:   1     # frame-by-frame; must be a multiple of the backbone lookahead block
+# Set single_pass: true to run the whole track in one forward call instead (may OOM on long tracks).
+# single_pass: true
+
+# Backbone (frozen). Switch the whole block at once (A: 330M, B: 95M, C: 26M student).
+# mert_align_checkpoint is a train_mert_causal_distill.py checkpoint: optional for
+# 'streaming' (null = plain remap of the published MERT), required for 'small_streaming'.
+# For C, MERT_model must be the family the student was distilled from.
+
+# --- A. streaming, MERT-330M ---
+backbone:             streaming
+MERT_model:           m-a-p/MERT-v1-330M
+emb_dim:              1024
+mert_align_checkpoint: ../ckpt/pytorch/backbone/streaming_330M_r15.ckpt   # released (r0 also works)
+
+# --- B. streaming, MERT-95M ---
+# backbone:             streaming
+# MERT_model:           m-a-p/MERT-v1-95M
+# emb_dim:              768
+# mert_align_checkpoint: ../ckpt/pytorch/backbone/streaming_95M_r15.ckpt   # released (r0 also works)
+
+# --- C. small_streaming, 26M causal student ---
+# backbone:                    small_streaming
+# MERT_model:                  m-a-p/MERT-v1-95M   # base family only; must match the checkpoint
+# emb_dim:                     432                 # = the student's hidden_size
+# mert_align_checkpoint:       ../ckpt/pytorch/backbone/streaming_26M_r15.ckpt   # released (r0 also works)
+# student_num_attention_heads: 8                   # must match the distillation run
+
+sample_rate:          24000
+hop_size:             320
+pool_factor:          1        # 1 = native 75 fps; >1 mean-pools that many frames together
+mert_layer:           average  # 'average' or an int layer index (0..24 for 330M, 0..12 for 95M/26M)
+streaming_context:    750    # rolling KV-cache window, in raw frames (75 fps) = 10 s
+
+# Backbone positional embedding; must match mert_align_checkpoint. Use 'rope'.
+backbone_positional_embedding: rope
+
+# probe head / loss
+model_type:           LSTM      # 'MLP' (per-frame), 'LSTM' (unidirectional) or 'Transformer' (causal)
+hidden_dim:           512     # MLP only. null -> single linear layer; int -> one ReLU hidden layer
+pos_weight_beat:      1.0      # BCEWithLogitsLoss pos_weight for beats
+pos_weight_downbeat:  3.0      # BCEWithLogitsLoss pos_weight for downbeats
+
+# Transformer only
+transformer_d_model:               256
+transformer_num_heads:              4
+transformer_num_layers:             4
+transformer_dim_feedforward:     1024
+transformer_context:              null  # max attention lookback in frames; null = unbounded within a crop
+transformer_positional_embedding: rope
+
+# LSTM only
+lstm_hidden_dim:      256
+lstm_num_layers:      2
+lstm_dropout:         0.0     # between LSTM layers; ignored if lstm_num_layers == 1
+
+# training
+epochs:               30
+batch_size:           32
+num_workers:          8
+lr:                   1e-3
+seed:                 42
+device:               'cuda:0'
+ckpt_interval:        5
+
+# evaluation / post-processing (eval only; no retraining needed to change)
+#   'minimal'       -- peak-picking; streamable (+/-3 frames lookahead)
+#   'dbn'           -- madmom DBN, offline (whole-track Viterbi); needs madmom
+#   'dbn_blocksync' -- same DBN, decoded per backbone output block; streamable, no added latency
+postproc_type:        dbn_blocksync
+
+# 'dbn_blocksync' block size in frames; 'auto' reads it from the backbone (recommended)
+# dbn_block:          auto
+
+# DBN tempo-change penalty (sweep with sweep_postproc.py --transition-lambda)
+# dbn_transition_lambda: 100
+
+# Pin the bar length (3 or 4) for 'dbn_blocksync'; unset = decided causally
+# dbn_beats_per_bar:  4
+
+# logging
+use_wandb:            false
+wandb_project:        beat-tracking
+wandb_entity:         null

@@ -1,0 +1,105 @@
+# Causal streaming key detection on a frozen streaming MERT
+# (modeling/streaming/streaming_mert.py, KV-cache). The backbone is causal by
+# construction, so training runs the whole crop in one forward pass.
+#
+# Usage (from key_detection/):
+#   python train_streaming.py config/MERT_streaming.yaml <run_name>
+#   python infer_streaming.py logs/<run_name>/config.yaml logs/<run_name>/best.pt
+
+# --- data (see config/MERT_chunked.yaml) ------------------------------------
+# audio_dir:          path/to/audio_24kHz
+audio_dir:            path/to/audio
+annotation_dir:       path/to/annotations
+split_dir:            data_splits/splits
+audio_ext:            wav
+crop_duration:        10.0
+max_duration:         null
+
+# --- backbone --------------------------------------------------------------
+# Frozen. Switch the whole block at once (A / B / C); a mismatch raises at load.
+#   A/B. backbone: streaming -- MERT-330M / MERT-95M in the causal streaming
+#        architecture. mert_align_checkpoint (a train_mert_causal_distill.py
+#        checkpoint) loads the causally distilled weights; null = plain remap of
+#        the published MERT weights.
+#   C.   backbone: small_streaming -- 26M causally distilled student;
+#        mert_align_checkpoint required. MERT_model is the base family it was
+#        distilled from.
+
+# --- A. streaming, MERT-330M ---
+backbone:             streaming
+MERT_model:           m-a-p/MERT-v1-330M
+emb_dim:              1024
+mert_align_checkpoint: ../ckpt/pytorch/backbone/streaming_330M_r15.ckpt   # released (r0 also works)
+
+# --- B. streaming, MERT-95M ---
+# backbone:             streaming
+# MERT_model:           m-a-p/MERT-v1-95M
+# emb_dim:              768
+# mert_align_checkpoint: ../ckpt/pytorch/backbone/streaming_95M_r15.ckpt   # released (r0 also works)
+
+# --- C. small_streaming, 26M causal student ---
+# backbone:                    small_streaming
+# MERT_model:                  m-a-p/MERT-v1-95M   # base family only; must match the checkpoint
+# emb_dim:                     432                 # = the student's hidden_size
+# mert_align_checkpoint:       ../ckpt/pytorch/backbone/streaming_26M_r15.ckpt   # released (r0 also works)
+# student_num_attention_heads: 8                   # must match the distillation run
+
+sample_rate:          24000
+hop_size:             320
+pool_factor:          5         # 5x pooling -> 15 fps
+mert_layer:           average   # 'average' or an int layer index
+                                # (25 hidden states for 330M, 13 for 95M and the 26M student)
+# Rolling KV-cache window in raw frames (75 fps); must match the checkpoint's
+# distillation run (750 = 10 s for the released backbones).
+streaming_context:    750
+
+# Must match the checkpoint (a mismatch raises). Use 'rope'.
+backbone_positional_embedding: rope
+
+# --- inference (infer_streaming.py only) -----------------------------------
+# Default: streaming in one persistent session, fed in chunks of
+# stream_chunk_duration seconds (takes priority) or stream_chunk_frames raw
+# frames. Chunk size only affects speed; for the block-causal MuSTream backbones
+# it must be a multiple of the 15-frame block (4.0 s = 300 frames is fine).
+stream_chunk_duration: 4.0
+# stream_chunk_frames:   5
+# single_pass: true runs the whole track in one forward call (diagnostic;
+# memory is quadratic in length).
+# single_pass:          true
+
+# Keep one readout per this many seconds (curve size only); default every frame.
+# readout_interval:     0.5
+
+# --- head (see config/MERT_chunked.yaml) ------------------------------------
+model_type:           LSTM
+hidden_dim:           512       # MLP only; null -> a single nn.Linear(emb_dim, 24) linear probe
+
+transformer_d_model:               256
+transformer_num_heads:              4
+transformer_num_layers:             4
+transformer_dim_feedforward:     1024
+transformer_context:              null   # set a frame count to make the head streamable chunk-by-chunk
+transformer_positional_embedding: rope
+
+lstm_hidden_dim:      256
+lstm_num_layers:      2
+lstm_dropout:         0.0
+
+# --- training --------------------------------------------------------------
+train_readout:        final       # 'final' | 'running'
+epochs:               500
+batch_size:           16
+num_workers:          8
+lr:                   1e-3
+seed:                 42
+device:               'cuda:0'
+ckpt_interval:        25
+
+# Pitch-shift augmentation (training split only; inclusive semitone range).
+augment_pitch:        true
+pitch_shift_range:    [-4, 7]
+
+# --- logging ---------------------------------------------------------------
+use_wandb:            false
+wandb_project:        key-detection
+wandb_entity:         null

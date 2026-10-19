@@ -1,0 +1,48 @@
+[project]
+name = "mustream"
+version = "0.1.0"
+description = "Causal streaming MERT backbones and music-understanding probes (chord, key, beat)"
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    # core
+    "numpy==1.23.5",            # tested version
+    "scipy==1.15.3",
+    "torch==2.7.1",
+    "torchaudio==2.7.1",
+    "transformers==4.38.0",
+    "huggingface-hub==0.36.2",  # checkpoint download (hf CLI)
+    "lightning==2.6.5",
+    "argbind==0.3.9",
+    "einops==0.8.2",
+    "pyyaml==6.0.3",
+    "tqdm==4.68.2",
+    "wandb==0.27.2",            # logging (distillation always; probes only with use_wandb: true)
+    # data
+    "h5py==3.16.0",
+    "soundfile==0.14.0",
+    "soxr==1.1.0",
+    # understanding tasks
+    "mir-eval==0.8.2",
+    "madmom",                   # beat DBN post-processing (GitHub main: the PyPI 0.16.1 fails on Python 3.10)
+    # CQT front end in modeling/mert/modeling_MERT.py (feature_extractor_cqt)
+    "nnaudio==0.3.4",
+    # ONNX export / runners
+    "onnx==1.22.0",
+    "onnxruntime==1.23.2",
+]
+
+[tool.uv]
+# The code runs as scripts from mustream/ (see mustream/README.md), not as an installed package.
+package = false
+
+# CUDA 11.8 builds of PyTorch (tested). Change the index for another CUDA version or CPU.
+[[tool.uv.index]]
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu118" }
+torchaudio = { index = "pytorch-cu118" }
+madmom = { git = "https://github.com/CPJKU/madmom", rev = "27f032e8947204902c675e5e341a3faf5dc86dae" }

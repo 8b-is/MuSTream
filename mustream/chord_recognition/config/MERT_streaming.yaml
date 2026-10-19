@@ -1,0 +1,97 @@
+# Causal streaming chord probe (train_streaming.py / infer_streaming.py) on the
+# KV-cache streaming MERT (modeling/streaming/streaming_mert.py).
+
+# data
+split_dir:        data_splits/splits   # holds train.pkl / val.pkl / test.pkl
+vocab_path:       data_splits/dictionary_121.pkl
+eval_split:         val           # split infer_streaming.py scores: 'val' or 'test'
+crop_duration:    10.0            # training crop length, seconds
+
+# infer_streaming.py only. Default: genuine streaming, one session fed chunk by
+# chunk. Chunk size only affects speed, not results. stream_chunk_duration
+# (seconds) takes priority over stream_chunk_frames (raw 75 fps frames).
+stream_chunk_duration: 4.0   # fast offline eval
+# stream_chunk_frames:   1     # true frame-by-frame
+# Alternative: the whole song in one forward pass (diagnostic; may OOM on long songs).
+# single_pass: true
+
+# Backbone (frozen). Switch the whole block at once:
+#   A. MERT-330M and B. MERT-95M -- backbone: streaming. mert_align_checkpoint
+#      (a train_mert_causal_distill.py checkpoint) is optional; null uses the
+#      original MERT weights remapped into the causal architecture.
+#   C. 26M causal student -- backbone: small_streaming. mert_align_checkpoint is
+#      required; MERT_model must be the family it was distilled from.
+
+# --- A. streaming, MERT-330M ---
+backbone:         streaming
+MERT_model:       m-a-p/MERT-v1-330M
+emb_dim:          1024
+mert_align_checkpoint: ../ckpt/pytorch/backbone/streaming_330M_r15.ckpt   # released (r0 also works)
+
+# --- B. streaming, MERT-95M ---
+# backbone:         streaming
+# MERT_model:       m-a-p/MERT-v1-95M
+# emb_dim:          768
+# mert_align_checkpoint: ../ckpt/pytorch/backbone/streaming_95M_r15.ckpt   # released (r0 also works)
+
+# --- C. small_streaming, 26M causal student ---
+# backbone:                    small_streaming
+# MERT_model:                  m-a-p/MERT-v1-95M   # base family only; must match the checkpoint
+# emb_dim:                     432                 # = the student's hidden_size
+# mert_align_checkpoint:       ../ckpt/pytorch/backbone/streaming_26M_r15.ckpt   # released (r0 also works)
+# student_num_attention_heads: 8                   # must match the distillation run
+
+sample_rate:      24000
+hop_size:         320
+pool_factor:      5        # temporal pooling; 75 fps / 5 = 15 fps label rate
+mert_layer:       average  # 'average' or an int layer index
+streaming_context:  750   # rolling KV-cache window, in raw frames (~75fps) = 10s
+
+# Backbone positional embedding; must match mert_align_checkpoint. Use 'rope'.
+backbone_positional_embedding: rope
+
+# model
+model_type:       LSTM        # 'MLP' (per-frame), 'Transformer' (causal attention) or 'LSTM' (unidirectional)
+hidden_dim:       512         # MLP only; null = a single linear layer
+
+# Transformer only
+transformer_d_model:               256
+transformer_num_heads:              4
+transformer_num_layers:             4
+transformer_dim_feedforward:     1024
+transformer_context:              null  # max attention lookback in frames; null = unbounded within a crop
+transformer_positional_embedding: rope
+
+# LSTM only
+lstm_hidden_dim:  256
+lstm_num_layers:  2
+lstm_dropout:     0.0         # between LSTM layers; ignored if lstm_num_layers == 1
+
+# training
+epochs:           100
+batch_size:       8
+num_workers:      8
+lr:               1e-3
+device:           'cuda:0'
+ckpt_interval:    5           # also keeps best.pt (best val frame accuracy)
+
+# Pitch-shift augmentation (training split only), in semitones [min, max].
+augment_pitch:      true
+pitch_shift_range:  [-4, 7]
+
+seed:               42
+
+# evaluation / post-processing (eval only; no retraining needed to change)
+#   'none'      -- per-frame argmax
+#   'blocksync' -- self-bias CRF, decoded per backbone output block; streamable, no added latency
+#   'offline'   -- self-bias CRF, whole-track Viterbi; not causal
+decoder:
+  method:          blocksync
+  # self_bias:     1.0        # CRF self-transition bonus in nats (higher = fewer chord changes)
+  # block:         auto       # 'blocksync' only; 'auto' = the backbone's emission block
+  # emission_mode: logprobs   # 'logprobs' or 'logits'
+
+# logging
+use_wandb:        false
+wandb_project:    chord-recognition
+wandb_entity:     null

@@ -1,0 +1,100 @@
+# MERT size distillation: frozen full-size bidirectional MERT teacher -> small
+# bidirectional student (modeling/mert/small_mert.py).
+#
+#     python train_mert_size_distill.py --args.load=config/mert_size_distill.yml
+
+# Trainer
+$vars:
+    total_steps: 100000
+
+seed: 42
+train_steps: $total_steps
+val_interval: 1000
+overfit_batches: 0
+wandb_project: "mustream"
+log_every_n_steps: 1
+limit_val_batches: 128
+checkpoint_interval: 5000
+checkpoint_metric: "val/total_loss"
+checkpoint_mode: "min"
+checkpoint_top_k: 1
+load_from_latest_checkpoint: true
+accelerator: "auto"
+devices: "auto"
+num_nodes: 1
+precision: "bf16-mixed"
+strategy: "auto"
+compile: true
+
+# Data
+batch_size: 96
+num_workers: 8
+
+##### MTG-Jamendo (h5)
+h5_root: 'path/to/MTG-Jamendo-h5/MTG-Jamendo'
+h5_shards: 256
+train_split: 'data_splits/mtg_jamendo/train.pkl'
+valid_split: 'data_splits/mtg_jamendo/val.pkl'
+
+duration: 10.0
+sample_rate: 24000
+hop_length: 320
+
+# Teacher. mert_model is always required: it is the default teacher and supplies
+# the shared config / waveform normalization.
+mert_model: 'm-a-p/MERT-v1-95M'  # m-a-p/MERT-v1-95M, m-a-p/MERT-v1-330M
+# Optional: use an earlier small student checkpoint as the teacher (staged
+# shrinking). teacher_num_attention_heads defaults to student_num_attention_heads.
+# teacher_checkpoint: 'ckpt/mert_size_distill_.../step=100000.ckpt'
+# teacher_num_attention_heads: 8
+
+# Student architecture (STaRHuBERT-L defaults). Keep num_hidden_layers equal to
+# the teacher's depth (or unset) when distill_layer is 'all'.
+student_hidden_size: 432
+student_intermediate_size: 1392
+student_num_attention_heads: 8
+student_num_hidden_layers: 12
+
+# Loss: cosine + L2 between per-layer projected student and teacher hidden states.
+cosine_loss_weight: 1.0          # both losses are always logged; 0.0 = monitor only
+l2_loss_weight: 0.1
+distill_layer: 'all'             # 'all' | 'final' | 'average' | int layer index
+distill_intermediate_weight: 0.1 # 'all' only: weight of layers 0..-2
+distill_final_weight: 1.0        # 'all' only: weight of the final layer
+
+# Optimizer
+AdamW.lr: !!float 1e-4
+AdamW.weight_decay: !!float 1e-2
+
+# Scheduler (a resumed run keeps its saved scheduler values)
+LinearWarmupCosineDecay.warmup_iters: 2000
+LinearWarmupCosineDecay.total_iters: $total_steps
+LinearWarmupCosineDecay.eta_min: !!float 1e-6
+
+# Periodic chord / beat linear-probe evaluation on the student (evaluate_mert_distill.py)
+MERTChordEvaluator.enable: false
+MERTChordEvaluator.eval_interval: 5000
+MERTChordEvaluator.split_dir: 'chord_recognition/data_splits/splits'
+MERTChordEvaluator.vocab_file: 'chord_recognition/data_splits/dictionary_121.pkl'
+MERTChordEvaluator.crop_duration: 10.0
+MERTChordEvaluator.pool_factor: 5
+MERTChordEvaluator.probe_epochs: 10
+MERTChordEvaluator.mert_layer: 'average'
+MERTChordEvaluator.hidden_dim: 512
+MERTChordEvaluator.probe_lr: !!float 1e-3
+MERTChordEvaluator.batch_size: 8
+MERTChordEvaluator.num_workers: 4
+
+MERTBeatEvaluator.enable: false
+MERTBeatEvaluator.eval_interval: 5000
+MERTBeatEvaluator.audio_dir: 'path/to/beat_eval/audio'
+MERTBeatEvaluator.annotation_dir: 'path/to/beat_eval/annotations'
+MERTBeatEvaluator.split_dir: 'beat_tracking/data_splits/splits'
+MERTBeatEvaluator.crop_duration: 10.0
+MERTBeatEvaluator.pool_factor: 1
+MERTBeatEvaluator.mert_layer: 'average'
+MERTBeatEvaluator.probe_epochs: 10
+MERTBeatEvaluator.hidden_dim: 512
+MERTBeatEvaluator.probe_lr: !!float 1e-3
+MERTBeatEvaluator.batch_size: 8
+MERTBeatEvaluator.num_workers: 4

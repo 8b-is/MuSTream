@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Downloaded checkpoints and training outputs
+mustream/ckpt/
+mustream/*/logs/
+mustream/*/predictions/
+features/
+
+# Streaming demo
+streaming-demo/node_modules/
+streaming-demo/dist/
+streaming-demo/public/models/

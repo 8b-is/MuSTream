@@ -1,0 +1,97 @@
+# Sliding-window chord probe (train_sliding.py / infer.py): at every hop the
+# bidirectional MERT re-encodes the last context_duration seconds and keeps only
+# the newest hop_duration seconds of embeddings.
+
+# data
+split_dir:        data_splits/splits   # holds train.pkl / val.pkl / test.pkl
+vocab_path:       data_splits/dictionary_121.pkl
+eval_split:         val           # split infer.py scores: 'val' or 'test'
+crop_duration:    10.0            # training crop length, seconds
+
+# Hop and window length in seconds; each times 15 (the label rate) should be a
+# positive integer. Compute grows roughly with context_duration / hop_duration.
+hop_duration:     0.2
+context_duration: 5.0
+
+# Seconds of future audio inside each window (0 = strictly causal). Rounded to
+# a whole label frame; must be <= context_duration - hop_duration.
+lookahead:        0.0
+
+# Max windows per MERT forward pass; null = all in one call.
+# mert_batch_size:  128
+mert_batch_size:  256
+
+# Backbone (frozen). Switch the whole block at once:
+#   A. pretrained MERT-330M   B. pretrained MERT-95M
+#   C. 26M distilled bidirectional student: needs mert_align_checkpoint (a
+#      train_mert_size_distill.py checkpoint); MERT_model must be the family it
+#      was distilled from and student_* must match the distillation run.
+
+# --- A. pretrained, MERT-330M ---
+# backbone:         pretrained
+# MERT_model:       m-a-p/MERT-v1-330M
+# emb_dim:          1024
+
+# --- B. pretrained, MERT-95M ---
+backbone:         pretrained
+MERT_model:       m-a-p/MERT-v1-95M
+emb_dim:          768
+
+# --- C. small_bidirectional, 26M student ---
+# backbone:                    small_bidirectional
+# MERT_model:                  m-a-p/MERT-v1-95M   # base family only; must match the checkpoint
+# emb_dim:                     432                 # = student_hidden_size
+# mert_align_checkpoint:       ../ckpt/runs/bidirectional_26M/step=<N>.ckpt   # your own train_mert_size_distill.py run; not released
+# student_hidden_size:         432
+# student_intermediate_size:   1392
+# student_num_attention_heads: 8
+
+sample_rate:      24000
+hop_size:         320
+pool_factor:      5           # temporal pooling; 75 fps / 5 = 15 fps label rate
+mert_layer:       average     # 'average' or an int layer index
+
+# model
+model_type:       LSTM        # 'MLP' (per-frame), 'Transformer' (causal attention) or 'LSTM' (unidirectional)
+hidden_dim:       512         # MLP only
+
+# Transformer only
+transformer_d_model:               256
+transformer_num_heads:              4
+transformer_num_layers:             4
+transformer_dim_feedforward:     1024
+transformer_context:              null  # max attention lookback in frames; null = unbounded within a crop
+transformer_positional_embedding: rope
+
+# LSTM only
+lstm_hidden_dim:  256
+lstm_num_layers:  2
+lstm_dropout:     0.0         # between LSTM layers; ignored if lstm_num_layers == 1
+
+# training
+epochs:           100
+batch_size:       8
+num_workers:      8
+device:           'cuda:0'
+ckpt_interval:    5           # also keeps best.pt (best val frame accuracy)
+
+# Pitch-shift augmentation (training split only), in semitones [min, max].
+augment_pitch:      true
+pitch_shift_range:  [-4, 7]
+
+seed:               42
+
+# evaluation / post-processing (eval only; no retraining needed to change)
+#   'none'      -- per-frame argmax
+#   'blocksync' -- self-bias CRF, decoded per backbone output block; streamable, no added latency
+#   'offline'   -- self-bias CRF, whole-track Viterbi; not causal
+decoder:
+  method:          blocksync
+  # self_bias:     1.0        # CRF self-transition bonus in nats (higher = fewer chord changes)
+  # block:         auto       # 'blocksync' only; 'auto' = the backbone's emission block
+  # emission_mode: logprobs   # 'logprobs' or 'logits'
+
+# logging
+use_wandb:        false
+wandb_project:    chord-recognition
+wandb_entity:     null

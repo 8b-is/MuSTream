@@ -1,0 +1,85 @@
+# Offline key detection on a frozen bidirectional backbone: the whole crop
+# (training) / whole track (evaluation) goes through MERT in one pass.
+#
+# Usage (from key_detection/):
+#   python train_offline.py config/MERT_offline.yaml <run_name>
+#   python infer.py logs/<run_name>/config.yaml logs/<run_name>/best.pt
+
+# --- data (see config/MERT_chunked.yaml) ------------------------------------
+# audio_dir:          path/to/audio_24kHz
+audio_dir:            path/to/audio
+annotation_dir:       path/to/annotations
+split_dir:            data_splits/splits
+audio_ext:            wav
+crop_duration:        10.0
+# Evaluation only: cap each track (s); null = whole track. Lower it if a whole
+# track does not fit in memory.
+max_duration:         null
+
+# --- backbone --------------------------------------------------------------
+# Frozen. Switch the whole block at once (A / B / C).
+#   A. MERT-330M (published), B. MERT-95M (published),
+#   C. 26M distilled student: needs mert_align_checkpoint (a
+#      train_mert_size_distill.py checkpoint); MERT_model is the base family it
+#      was distilled from and student_* must match the distillation run.
+
+# --- A. pretrained, MERT-330M ---
+backbone:             pretrained
+MERT_model:           m-a-p/MERT-v1-330M
+emb_dim:              1024
+
+# --- B. pretrained, MERT-95M ---
+# backbone:             pretrained
+# MERT_model:           m-a-p/MERT-v1-95M
+# emb_dim:              768
+
+# --- C. small_bidirectional, 26M student ---
+# backbone:                    small_bidirectional
+# MERT_model:                  m-a-p/MERT-v1-95M   # base family only; must match the checkpoint
+# emb_dim:                     432                 # = student_hidden_size
+# mert_align_checkpoint:       ../ckpt/runs/bidirectional_26M/step=<N>.ckpt   # your own train_mert_size_distill.py run; not released
+# student_hidden_size:         432
+# student_intermediate_size:   1392
+# student_num_attention_heads: 8
+
+sample_rate:          24000
+hop_size:             320
+pool_factor:          5         # 5x pooling -> 15 fps
+mert_layer:           average   # 'average' | 'low'/'middle'/'high'/'top'/'half' | int layer index
+                                # (25 hidden states for 330M, 13 for 95M and the 26M student)
+
+# --- head (see config/MERT_chunked.yaml) ------------------------------------
+model_type:           LSTM
+hidden_dim:           512       # MLP only; null -> a single nn.Linear(emb_dim, 24) linear probe
+
+# Transformer only (ignored otherwise)
+transformer_d_model:               256
+transformer_num_heads:              4
+transformer_num_layers:             4
+transformer_dim_feedforward:     1024
+transformer_context:              null   # attention lookback in frames; null = unbounded within a crop
+transformer_positional_embedding: rope
+
+# LSTM only (ignored otherwise)
+lstm_hidden_dim:      256
+lstm_num_layers:      2
+lstm_dropout:         0.0
+
+# --- training --------------------------------------------------------------
+train_readout:        final     # 'final' | 'running'
+epochs:               400
+batch_size:           16
+num_workers:          8
+lr:                   1e-3
+seed:                 42
+device:               'cuda:0'
+ckpt_interval:        25        # best.pt (by val weighted score) is always kept
+
+# Pitch-shift augmentation (training split only; inclusive semitone range).
+augment_pitch:        true
+pitch_shift_range:    [-4, 7]
+
+# --- logging ---------------------------------------------------------------
+use_wandb:            false
+wandb_project:        key-detection
+wandb_entity:         null
