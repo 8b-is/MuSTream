@@ -86,6 +86,24 @@ evaluation, see [`mustream/README.md`](mustream/README.md).
 | [`streaming-demo/`](streaming-demo/README.md) | The browser demo: real-time chord, beat and key recognition with ONNX Runtime Web. |
 | [`docs/`](docs/) | Additional results and the overview figure. |
 
+## License
+
+Copyright 2026 Yamaha Corporation and the MuSTream authors.
+
+- **Code**: the source code in this repository is licensed under the
+  [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0), except for the
+  third-party code listed under [Acknowledgement](#acknowledgement), which keeps its
+  original license.
+- **Models**: the released model weights (the MuSTream backbones and the chord, beat
+  and key probes, in PyTorch and ONNX, at
+  [yamaha-research/MuSTream](https://huggingface.co/yamaha-research/MuSTream)) are
+  licensed under the
+  [Creative Commons Attribution-NonCommercial 4.0 International License](LICENSE-MODEL)
+  (CC BY-NC 4.0). They are granted for non-commercial research purposes only.
+
+For commercial use of the code under other terms, or of the model weights, please
+contact us.
+
 ## Acknowledgement
 
 MuSTream builds on the following open-source code:
@@ -93,4 +111,4 @@ MuSTream builds on the following open-source code:
 - [`mustream/modeling/moshi/`](mustream/modeling/moshi/) is vendored from
   [Moshi](https://github.com/kyutai-labs/moshi) (Kyutai), under the MIT License. 
 - [`mustream/modeling/mert/`](mustream/modeling/mert/) is adapted from
-  [MERT](https://github.com/yizhilll/MERT) (Apache License 2.0).
+  [MERT](https://github.com/yizhilll/MERT) (Apache License 2.0, see [`LICENSE`](mustream/modeling/mert/LICENSE)).

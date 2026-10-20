@@ -7,6 +7,9 @@ Adapted from the official MERT release:
 The original MERT authors note that they largely adapt code from:
 1. https://github.com/huggingface/transformers/blob/main/src/transformers/models/hubert/modeling_hubert.py
 2. https://github.com/facebookresearch/fairseq/blob/main/fairseq/models/wav2vec/wav2vec2.py
+
+The original code is licensed under the Apache License 2.0 (see LICENSE in this
+directory); this file has been modified for MuSTream.
 """
 
 from typing import Optional, Tuple, Union

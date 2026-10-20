@@ -6,6 +6,9 @@ Adapted from the official MERT release:
 2. https://github.com/yizhilll/MERT
 which in turn builds on
 https://github.com/huggingface/transformers/blob/main/src/transformers/models/hubert/configuration_hubert.py
+
+The original code is licensed under the Apache License 2.0 (see LICENSE in this
+directory); this file has been modified for MuSTream.
 """
 
 import functools

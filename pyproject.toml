@@ -3,6 +3,8 @@ name = "mustream"
 version = "0.1.0"
 description = "Causal streaming MERT backbones and music-understanding probes (chord, key, beat)"
 readme = "README.md"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE"]
 requires-python = ">=3.10,<3.11"
 dependencies = [
     # core
