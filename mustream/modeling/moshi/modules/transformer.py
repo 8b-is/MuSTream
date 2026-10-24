@@ -151,7 +151,8 @@ def create_sin_embedding(
     max_period_tensor = torch.full(
         [], max_period, device=positions.device, dtype=dtype
     )  # avoid sync point
-    phase = positions / (max_period_tensor ** (adim / (half_dim - 1)))
+    denom = max(half_dim - 1, 1)
+    phase = positions / (max_period_tensor ** (adim / denom))
     return torch.cat([torch.cos(phase), torch.sin(phase)], dim=-1)
 
 
@@ -366,7 +367,8 @@ class _MHAState(State):
         self.offset[:] = torch.where(reset_mask, torch.zeros_like(self.offset), self.offset)
         if self.kv_cache is not None:
             self.kv_cache.reset(reset_mask)
-        self.offset_cpu = 0
+        if bool(reset_mask.all()):
+            self.offset_cpu = 0
 
 
 class StreamingMultiheadAttention(StreamingModule[_MHAState]):
