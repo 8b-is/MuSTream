@@ -1,37 +1,22 @@
-"""
-================================================================================
-[8b-is Sovereign Yamaha MuSTream Substrate — Omni BFP-64 RingKVCache, Z_{2^32}
- Phase-Ring RoPE, Quantum 64-Trit b1.58 Linear & Laser Phoenix Beat/Key PLL]
+"""Standalone standard-library references for quantization and beat timing.
 
-Connects Yamaha Corporation Research's MuSTream ("A Streaming Music Representation
-for Online Music Understanding", 26M / 95M / 330M causal streaming MERT) with the
-8b-is audio & quantization stack:
-- https://github.com/8b-is/alexiai  (GAIA-MLX-QUANT b1.58 + p/q + D+++ 432Hz)
-- https://github.com/8b-is/qwave    (Salience-gated real-time acoustic engine)
-- https://github.com/8b-is/bigvsan  (Z_{2^32} phase-ring & bitplane popcount)
+These helpers are exercised by unit tests; they are not wired into MuSTream's
+backbone, ONNX export or browser inference path. No model accuracy, speed, CPU
+cache residency or memory-footprint improvement has been established here.
 
-Key Mathematical & Efficiency Upgrades for Yamaha MuSTream (Zero-Dependency Stdlib):
-1. Omni BFP-64 Streaming RingKV Cache (`RingKVCacheBfp64Pq`):
-   Compresses streaming transformer KV-cache vectors from 256 bytes/64d (FP32) to
-   65 bytes/64d (64 int8 mantissas + 1 shared int8 exponent = 256/65 ~= 63/16x
-   compression), allowing MuSTream-95M and MuSTream-330M to keep their 1000-frame
-   (13.3s @ 75 fps) streaming KV context entirely inside CPU L2/L3 cache.
-
-2. Z_{2^32} Modular Phase-Ring RoPE (`RotaryEmbeddingPq`):
-   Accumulates rotary positional phases in exact modulo-2^32 integer arithmetic
-   `phi_{t, d} = ((t + offset) * omega_u32[d]) & 0xFFFFFFFF` with a Q15 sin/cos
-   LUT, eliminating IEEE-754 float32 phase drift across multi-hour live concerts.
-
-3. Quantum 64-Trit b1.58 Bitplane Popcount Linear (`QuantumTernaryLinearPq`):
-   Packs balanced-ternary weights `w in {-1, 0, +1}` into 64-trit bitplanes
-   (`pos_mask: u64`, `neg_mask: u64`) and 5-trits-per-byte storage (3^5 = 243 <= 256),
-   reducing MERT-330M linear weight memory by ~19.8x vs FP32 (~5.0x vs INT8).
-
-4. Laser Phoenix Lattice p/q Beat/Downbeat PLL & Just-Intonation Key Lattice:
-   Replaces floating-point frame-to-second division (`beat_frame / self.fps`) and
-   tempo drift with an exact Z_{2^32} / Q16 phase-locked loop and reduced p/q
-   rational BPM / harmonic key ratios.
-================================================================================
+* BFP-64 quantizes 64 values to integer mantissas and a shared exponent. The
+  hypothetical packed payload is 65 bytes versus 256 bytes for FP32 (256/65).
+  Actual storage uses Python objects; no binary serializer is implemented.
+* Rotary phases use integer modulo-2^32 arithmetic after frequency quantization.
+  Q15 lookup values and a 4096-entry table approximate sine and cosine. Integer
+  phase arithmetic does not eliminate quantization error over long sessions.
+* The ternary linear reference keeps unpacked trits, integer scales and bit masks.
+  Its byte estimate assumes five trits per byte plus four bytes per row scale;
+  it excludes bias, bit masks and Python overhead. Forward evaluation uses the
+  trit lists, additions and scale multiplication, not a popcount matrix kernel.
+* The beat oscillator rounds its phase increment down to Q16. Reported BPM is the
+  reduced rational for the configured period, not a measured or exact emitted
+  tempo. The just-intonation ratios are constants, not a key-detection model.
 """
 
 from __future__ import annotations
@@ -64,13 +49,13 @@ def isqrt_u128(n: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# 1. Omni BFP-64 Block-Floating-Point Streaming Ring KV-Cache (256/65 = 63/16x)
+# 1. BFP-64 reference ring cache (hypothetical payload ratio 256/65)
 # ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
 class Bfp64Block:
-    """64 int8 mantissas [-127, +127] + 1 shared int8 power-of-two exponent (65 bytes)."""
+    """Python representation of 64 mantissas and a shared power-of-two exponent."""
 
     mantissas: Tuple[int, ...]
     exponent: int
@@ -106,12 +91,11 @@ class KVCacheResultPq:
 
 class RingKVCacheBfp64Pq:
     """
-    Omni BFP-64 Block-Floating-Point Streaming Ring KV-Cache for causal MERT.
-    Stores each 64-element head vector block as:
-      - 64 int8 mantissas in [-127, +127]
-      - 1 shared int8 power-of-two exponent
-    Compresses FP32 KV-cache footprint by 256/65 (~63/16x = 3.94x) while preserving
-    exact pre-write ring concatenation semantics from `RingKVCache.complete()`.
+    Single-head reference ring cache using BFP-64 Python objects.
+
+    Returns cached rows before writing the incoming chunk, followed by unquantized
+    incoming rows. Stored rows are quantized, so later reads are approximate.
+    Byte properties describe ideal packed payloads, not this object's footprint.
     """
 
     BLOCK_SIZE = 64
@@ -139,6 +123,7 @@ class RingKVCacheBfp64Pq:
 
     @property
     def bfp64_bytes(self) -> int:
+        """Hypothetical packed K/V payload bytes, excluding Python overhead."""
         return 2 * self.capacity * self.num_blocks * 65
 
     @property
@@ -214,16 +199,16 @@ class RingKVCacheBfp64Pq:
 
 
 # ---------------------------------------------------------------------------
-# 2. Exact Z_{2^32} Phase-Ring RoPE (Zero Float Drift Across Long Sessions)
+# 2. Quantized modulo-2^32 rotary embedding reference
 # ---------------------------------------------------------------------------
 
 
 class RotaryEmbeddingPq:
     """
-    Laser Phoenix Lattice Z_{2^32} phase-ring Rotary Positional Embedding.
-    Accumulates phase in exact modulo-2^32 integer ring arithmetic:
+    Approximate rotary embedding with quantized frequency and lookup values.
+    The phase multiplication itself uses exact modulo-2^32 integer arithmetic:
         phi_{t, d} = ((t + offset) * omega_u32[d]) mod 2^32
-    eliminating float32 sin/cos phase drift at large streaming offsets (t >> 10^5).
+    Rounding the frequency introduces error that can accumulate with the offset.
     """
 
     RING_MOD = 1 << 32
@@ -277,14 +262,16 @@ class RotaryEmbeddingPq:
 
 
 # ---------------------------------------------------------------------------
-# 3. Quantum 64-Trit b1.58 Linear Projection (5.0x vs INT8, Multiplier-Free)
+# 3. Balanced-ternary linear reference with Q16 scales
 # ---------------------------------------------------------------------------
 
 
 class QuantumTernaryLinearPq:
     """
-    Balanced-ternary b1.58 {-1, 0, +1} linear projection with per-channel p/q rational
-    Q16 scales, 64-trit bitplane popcount norms, and 5-trits-per-byte packing.
+    Balanced-ternary {-1, 0, +1} linear projection with per-row Q16 scales.
+
+    Trit lists and bit masks coexist in memory. The five-trit byte count is an
+    estimate only; there is no packed-weight serializer or packed forward kernel.
     """
 
     Q16_SHIFT = 16
@@ -351,6 +338,7 @@ class QuantumTernaryLinearPq:
             self.bias_q16 = None
 
     def packed_5trit_bytes(self) -> int:
+        """Ideal weight/scale payload estimate; excludes bias, masks and overhead."""
         total_trits = self.out_features * self.in_features
         return (total_trits + 4) // 5 + self.out_features * 4
 
@@ -384,7 +372,7 @@ class QuantumTernaryLinearPq:
 
 
 # ---------------------------------------------------------------------------
-# 4. Laser Phoenix Lattice p/q Beat PLL & Just-Intonation Key Harmonic Lattice
+# 4. Q16 beat oscillator and just-intonation reference ratios
 # ---------------------------------------------------------------------------
 
 
@@ -406,20 +394,20 @@ JUST_INTONATION_RATIOS_PQ: Tuple[Tuple[int, int], ...] = (
 
 @dataclass
 class BeatPllStatePq:
-    """Exact p/q rational state for streaming beat/downbeat phase-locked loop."""
+    """Q16 beat oscillator with rational nominal BPM and a bar-position counter."""
 
     fps_num: int = 75
     fps_den: int = 1
     period_frames_num: int = 37
     period_frames_den: int = 1
     phase_q16: int = 0
-    bar_beat_idx: int = 0
+    bar_beat_idx: int = 0  # Position of the next emitted beat within the bar.
     beats_per_bar: int = 4
 
     def step_frame(self, beat_active: bool, downbeat_active: bool) -> Tuple[bool, bool, Tuple[int, int]]:
         """
         Advance 1 frame on the Q16 phase ring [0, 65536) and return:
-        (emit_beat, emit_downbeat, exact_bpm_pq).
+        (emit_beat, emit_downbeat, nominal_bpm_pq).
         """
         omega_q16 = (65536 * self.period_frames_den) // max(self.period_frames_num, 1)
         self.phase_q16 = (self.phase_q16 + omega_q16) & 0xFFFF
@@ -436,7 +424,7 @@ class BeatPllStatePq:
                 emit_downbeat = True
             else:
                 emit_downbeat = self.bar_beat_idx == 0
-                self.bar_beat_idx = (self.bar_beat_idx + 1) % self.beats_per_bar
+            self.bar_beat_idx = (self.bar_beat_idx + 1) % self.beats_per_bar
 
         bpm_pq = reduce_rational_pq(
             60 * self.fps_num * self.period_frames_den,

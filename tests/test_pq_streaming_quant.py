@@ -1,6 +1,6 @@
-"""
-Unit tests and honest p/q benchmarks for Yamaha MuSTream Omni BFP-64 KV-Cache,
-Z_{2^32} Phase-Ring RoPE, Quantum 64-Trit b1.58 Linear, and Laser Phoenix Beat PLL.
+"""Functional checks for standalone references, not model/performance benchmarks.
+
+Byte-count checks cover theoretical payload estimates, not actual Python memory.
 """
 
 import importlib.util
@@ -51,7 +51,7 @@ class TestYamahaMuSTreamPq(unittest.TestCase):
             v_chunk = [[rng.gauss(0.0, 1.0) for _ in range(D)] for _ in range(16)]
             res = bfp_cache.complete(k_chunk, v_chunk)
             self.assertEqual(len(res.keys), cap + 16)
-            # Measure worst-case BFP-64 reconstruction relative error across chunk (~1/96 worst case)
+            # Check reconstruction error on this seeded sample, not a worst-case bound.
             for row in k_chunk:
                 rec = bfp_cache.dequantize_vec(bfp_cache.quantize_vec(row))
                 err = _l2_norm([a - b for a, b in zip(row, rec)]) / _l2_norm(row)
