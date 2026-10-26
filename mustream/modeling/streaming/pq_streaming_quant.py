@@ -44,7 +44,7 @@ from typing import List, Optional, Sequence, Tuple
 def reduce_rational_pq(num: int, den: int) -> Tuple[int, int]:
     """Return exact GCD-reduced (p, q) with q > 0."""
     if den == 0:
-        return (0, 1)
+        raise ZeroDivisionError("rational denominator must not be zero")
     if den < 0:
         num, den = -num, -den
     g = math.gcd(abs(num), den)
@@ -77,7 +77,10 @@ class Bfp64Block:
 
     @classmethod
     def quantize(cls, values: Sequence[float]) -> "Bfp64Block":
-        assert len(values) == 64, f"Expected 64 values, got {len(values)}"
+        if len(values) != 64:
+            raise ValueError(f"Expected 64 values, got {len(values)}")
+        if not all(math.isfinite(v) for v in values):
+            raise ValueError("BFP values must be finite")
         max_abs = max((abs(v) for v in values), default=0.0)
         if max_abs == 0.0:
             return cls(mantissas=(0,) * 64, exponent=0)
@@ -114,7 +117,14 @@ class RingKVCacheBfp64Pq:
     BLOCK_SIZE = 64
 
     def __init__(self, capacity: int, dim_per_head: int = 64):
-        assert dim_per_head % self.BLOCK_SIZE == 0
+        if isinstance(capacity, bool) or not isinstance(capacity, int):
+            raise TypeError("capacity must be an integer")
+        if isinstance(dim_per_head, bool) or not isinstance(dim_per_head, int):
+            raise TypeError("dim_per_head must be an integer")
+        if capacity <= 0:
+            raise ValueError("capacity must be positive")
+        if dim_per_head <= 0 or dim_per_head % self.BLOCK_SIZE:
+            raise ValueError("dim_per_head must be a positive multiple of 64")
         self.capacity = int(capacity)
         self.dim_per_head = int(dim_per_head)
         self.num_blocks = self.dim_per_head // self.BLOCK_SIZE
@@ -140,6 +150,8 @@ class RingKVCacheBfp64Pq:
 
     @staticmethod
     def quantize_vec(vec: Sequence[float]) -> List[Bfp64Block]:
+        if len(vec) == 0 or len(vec) % 64:
+            raise ValueError("vector length must be a positive multiple of 64")
         nb = len(vec) // 64
         return [Bfp64Block.quantize(vec[b * 64 : (b + 1) * 64]) for b in range(nb)]
 
@@ -157,7 +169,15 @@ class RingKVCacheBfp64Pq:
         self, k_chunk: Sequence[Sequence[float]], v_chunk: Sequence[Sequence[float]]
     ) -> KVCacheResultPq:
         T = len(k_chunk)
-        assert T == len(v_chunk) and 0 < T <= self.capacity
+        if T != len(v_chunk) or not 0 < T <= self.capacity:
+            raise ValueError("key/value chunks must have equal lengths within cache capacity")
+        if any(len(row) != self.dim_per_head for row in k_chunk):
+            raise ValueError("key row width must equal dim_per_head")
+        if any(len(row) != self.dim_per_head for row in v_chunk):
+            raise ValueError("value row width must equal dim_per_head")
+        # Prepare every row first: a bad later row must leave the cache intact.
+        k_quantized = [self.quantize_vec(row) for row in k_chunk]
+        v_quantized = [self.quantize_vec(row) for row in v_chunk]
         cap = self.capacity
         end = self.end_offset
         last_written = end - 1
@@ -186,8 +206,8 @@ class RingKVCacheBfp64Pq:
 
         for t in range(T):
             write_slot = (end + t) % cap
-            self.k_ring[write_slot] = self.quantize_vec(k_chunk[t])
-            self.v_ring[write_slot] = self.quantize_vec(v_chunk[t])
+            self.k_ring[write_slot] = k_quantized[t]
+            self.v_ring[write_slot] = v_quantized[t]
         self.end_offset += T
 
         return KVCacheResultPq(keys=keys, values=values, positions=positions)
@@ -277,6 +297,17 @@ class QuantumTernaryLinearPq:
     ):
         self.out_features = len(weight)
         self.in_features = len(weight[0]) if self.out_features > 0 else 0
+        if self.out_features == 0 or self.in_features == 0:
+            raise ValueError("weight must be a nonempty rectangular matrix")
+        if any(len(row) != self.in_features for row in weight):
+            raise ValueError("weight rows must have equal widths")
+        if not all(math.isfinite(v) for row in weight for v in row):
+            raise ValueError("weights must be finite")
+        if bias is not None:
+            if len(bias) != self.out_features:
+                raise ValueError("bias length must equal out_features")
+            if not all(math.isfinite(v) for v in bias):
+                raise ValueError("bias values must be finite")
         self.num_words = (self.in_features + 63) // 64
 
         self.trits: List[List[int]] = []
@@ -330,6 +361,10 @@ class QuantumTernaryLinearPq:
         return reduce_rational_pq(self.fp32_bytes(), self.packed_5trit_bytes())
 
     def forward_vec(self, x: Sequence[float]) -> List[float]:
+        if len(x) != self.in_features:
+            raise ValueError("input length must equal in_features")
+        if not all(math.isfinite(v) for v in x):
+            raise ValueError("input values must be finite")
         x_q16 = [int(round(v * self.Q16_ONE)) for v in x]
         inv_q16 = 1.0 / float(self.Q16_ONE)
         out: List[float] = []
