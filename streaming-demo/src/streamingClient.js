@@ -16,6 +16,7 @@ export class InferenceStream {
     this.info = null;
     this.requested = new Set();
     this.loading = null;
+    this.terminalError = null;
     this.worker.onmessage = ({ data }) => {
       if (data.type === "progress") {
         this.onProgress?.(data);
@@ -28,17 +29,33 @@ export class InferenceStream {
       else entry.resolve(data);
     };
     this.worker.onerror = (e) => {
-      const err = new Error(e.message || "inference worker failed");
-      for (const { reject } of this.pending.values()) reject(err);
-      this.pending.clear();
+      this.#stop(new Error(e.message || "inference worker failed"));
     };
+    this.worker.onmessageerror = () => this.#stop(new Error("could not read inference worker response"));
+  }
+
+  #stop(error) {
+    if (this.terminalError) return;
+    this.terminalError = error;
+    this.info = null;
+    this.onProgress = null;
+    this.worker.onmessage = this.worker.onerror = this.worker.onmessageerror = null;
+    this.worker.terminate();
+    for (const { reject } of this.pending.values()) reject(error);
+    this.pending.clear();
   }
 
   #send(msg, transfer = []) {
+    if (this.terminalError) return Promise.reject(this.terminalError);
     const seq = ++this.seq;
     return new Promise((resolve, reject) => {
       this.pending.set(seq, { resolve, reject });
-      this.worker.postMessage({ ...msg, seq }, transfer);
+      try {
+        this.worker.postMessage({ ...msg, seq }, transfer);
+      } catch (err) {
+        this.pending.delete(seq);
+        reject(err);
+      }
     });
   }
 
@@ -51,6 +68,7 @@ export class InferenceStream {
    * a backbone that is already compiled in the worker.
    */
   load(tasks, onProgress, config) {
+    if (this.terminalError) return Promise.reject(this.terminalError);
     this.onProgress = onProgress;
     const missing = tasks.filter((t) => !this.requested.has(t));
     if (!missing.length && this.loading) return this.loading;
@@ -61,7 +79,7 @@ export class InferenceStream {
     this.loading = (this.loading ?? Promise.resolve())
       .catch(() => {})
       .then(() => this.#send({ type: "load", tasks: wanted, config, model: this.model }))
-      .then((res) => (this.info = res.info))
+      .then((res) => this.#remember(res))
       .catch((err) => {
         for (const t of missing) this.requested.delete(t);
         this.loading = null;
@@ -82,7 +100,7 @@ export class InferenceStream {
   configure(config) {
     this.loading = (this.loading ?? Promise.resolve())
       .then(() => this.#send({ type: "configure", config }))
-      .then((res) => (this.info = res.info));
+      .then((res) => this.#remember(res));
     return this.loading;
   }
 
@@ -107,7 +125,13 @@ export class InferenceStream {
   }
 
   close() {
-    this.worker.terminate();
+    this.#stop(new Error("inference stream is closed"));
+  }
+
+  #remember(res) {
+    // close/error may happen after a reply resolves but before its continuation.
+    if (this.terminalError) throw this.terminalError;
+    return (this.info = res.info);
   }
 }
 
