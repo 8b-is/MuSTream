@@ -218,6 +218,8 @@ function Demo({ page, onHome }) {
   const endedRef = useRef(false);
   const finishedRef = useRef(false);   // the tail flush is only owed once
   const timesRef = useRef([]);
+  const operationRef = useRef(0);      // invalidate work from a previous selection/run
+  const runRef = useRef(null);         // only an active run may feed the worker
 
   const [file, setFile] = useState(null);
   const [audioUrl, setAudioUrl] = useState("");
@@ -282,10 +284,34 @@ function Demo({ page, onHome }) {
     return () => { alive = false; };
   }, [page]);
 
+  useEffect(() => {
+    const audio = audioRef.current;
+    return () => {
+      invalidatePlayback();
+      audio?.pause(); // React may already have cleared the element ref.
+    };
+  }, []);
+
   useEffect(() => () => {
-    clearInterval(pumpRef.current);
     if (audioUrl) URL.revokeObjectURL(audioUrl);
   }, [audioUrl]);
+
+  function invalidatePlayback() {
+    const operation = ++operationRef.current;
+    runRef.current = null;
+    clearInterval(pumpRef.current);
+    pumpRef.current = null;
+    audioRef.current?.pause();
+    return operation;
+  }
+
+  function beginOperation() {
+    const operation = invalidatePlayback();
+    setAutoStart(false);
+    setPlaying(false);
+    setStreaming(false);
+    return operation;
+  }
 
   function resetStreams() {
     setSegments([]);
@@ -299,11 +325,12 @@ function Demo({ page, onHome }) {
   }
 
   /** Decode once per (file, rate); the models want mono at their own rate. */
-  async function ensureDecoded(target, rate) {
+  async function ensureDecoded(target, rate, operation) {
     const cached = decodedRef.current;
     if (cached.file === target && cached.rate === rate) return cached.samples;
     const { samples } = await decodeToModelRate(target, rate);
-    decodedRef.current = { file: target, rate, samples };
+    if (operation === operationRef.current)
+      decodedRef.current = { file: target, rate, samples };
     return samples;
   }
 
@@ -315,33 +342,32 @@ function Demo({ page, onHome }) {
   /** The bundled sample: load it like an upload, then stream it as soon as the
    *  graphs are up (the effect below), so one click is the whole demo. */
   async function playSample() {
+    const operation = beginOperation();
     setStatus("Fetching the sample");
     try {
       const res = await fetch(sampleUrl);
+      if (operation !== operationRef.current) return;
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const blob = await res.blob();
-      if (await loadFile(new File([blob], "test.wav", { type: blob.type || "audio/wav" })))
-        setAutoStart(true);
+      if (operation !== operationRef.current) return;
+      await loadFile(new File([blob], "test.wav", { type: blob.type || "audio/wav" }), true, operation);
     } catch (err) {
+      if (operation !== operationRef.current) return;
       setStatus("Could not fetch the sample");
       console.error(err);
     }
   }
 
   useEffect(() => {
-    if (!autoStart || !ready || !file) return;
+    if (!autoStart || autoStart !== operationRef.current || !ready || !file) return;
     setAutoStart(false);
     // Safari may refuse play() this far from the click; the file stays loaded.
-    startDemo().catch((err) => {
-      setStatus("Sample loaded: press Start streaming");
-      console.warn(err);
-    });
+    startDemo();
   }, [autoStart, ready, file]);
 
   /** Returns whether the file decoded. */
-  async function loadFile(selected) {
-    clearInterval(pumpRef.current);
-    if (audioUrl) URL.revokeObjectURL(audioUrl);
+  async function loadFile(selected, autoPlay = false, operation = beginOperation()) {
+    if (operation !== operationRef.current) return false;
     setFile(selected);
     setAudioUrl(URL.createObjectURL(selected));
     setPosition(0);
@@ -355,10 +381,14 @@ function Demo({ page, onHome }) {
     try {
       // 24 kHz is what every graph in ckpt_onnx/ uses; the real rate replaces
       // it on the first play if a future export differs.
-      samplesRef.current = await ensureDecoded(selected, infoRef.current?.sampleRate ?? 24000);
+      const samples = await ensureDecoded(selected, infoRef.current?.sampleRate ?? 24000, operation);
+      if (operation !== operationRef.current) return false;
+      samplesRef.current = samples;
       setStatus("Ready");
+      setAutoStart(autoPlay ? operation : false);
       return true;
     } catch (err) {
+      if (operation !== operationRef.current) return false;
       setStatus("Could not decode this file");
       console.error(err);
       return false;
@@ -403,7 +433,8 @@ function Demo({ page, onHome }) {
    * model ever sees further into the track than the listener does: what is on
    * screen is the pipeline's genuine one-chunk latency, not a replay.
    */
-  const pump = useCallback(async () => {
+  const pump = useCallback(async (operation = runRef.current) => {
+    if (operation === null || operation !== operationRef.current) return;
     const info = infoRef.current;
     const samples = samplesRef.current;
     const el = audioRef.current;
@@ -433,6 +464,7 @@ function Demo({ page, onHome }) {
         // `real` is what lets each head drop the output the zero-padded tail
         // invented, so every transcript ends where the audio does.
         const out = await stream().pushChunk(audio, real);
+        if (operation !== operationRef.current) return;
         cursorRef.current += 1;
         absorb(out, geometry);
         timesRef.current = [...timesRef.current.slice(-49), out.ms];
@@ -443,15 +475,23 @@ function Demo({ page, onHome }) {
         finishedRef.current = true;
         // Beat's peak picker holds the last few frames until their windows are
         // complete; this is where those beats come out.
-        absorb(await stream().finish(), geometry);
+        const out = await stream().finish();
+        if (operation !== operationRef.current) return;
+        absorb(out, geometry);
         clearInterval(pumpRef.current);
         pumpRef.current = null;
+        runRef.current = null;
         setStreaming(false);
         setPlaying(false);
         setStatus("Finished");
       }
     } catch (err) {
+      if (operation !== operationRef.current) return;
       clearInterval(pumpRef.current);
+      pumpRef.current = null;
+      runRef.current = null;
+      el.pause();
+      setPlaying(false);
       setStreaming(false);
       setStatus("Inference failed");
       console.error(err);
@@ -464,25 +504,32 @@ function Demo({ page, onHome }) {
     const el = audioRef.current;
     if (!el || !file || !ready) return;
 
+    const operation = beginOperation();
+    let failure = "Could not decode this file";
     setStatus("Decoding audio");
     try {
-      samplesRef.current = await ensureDecoded(file, infoRef.current.sampleRate);
+      const samples = await ensureDecoded(file, infoRef.current.sampleRate, operation);
+      if (operation !== operationRef.current) return;
+      samplesRef.current = samples;
+      resetStreams();
+      failure = "Could not reset the stream";
+      // The worker serializes this reset after any old chunk already in flight.
+      if (live.length) await stream().reset();
+      if (operation !== operationRef.current) return;
+      el.currentTime = 0;
+      failure = "Audio loaded: press Play to try again";
+      await el.play();
+      if (operation !== operationRef.current) return;
+      runRef.current = operation;
+      setPlaying(true);
+      setStreaming(true);
+      setStatus(live.length ? "Streaming" : "Playing (no head to run)");
+      if (live.length) pumpRef.current = setInterval(() => pump(operation), 50);
     } catch (err) {
-      setStatus("Could not decode this file");
+      if (operation !== operationRef.current) return;
+      setStatus(failure);
       console.error(err);
-      return;
     }
-
-    resetStreams();
-    if (live.length) await stream().reset();   // per-track state, by construction
-    el.currentTime = 0;
-    await el.play();
-    setPlaying(true);
-    setStreaming(true);
-    setStatus(live.length ? "Streaming" : "Playing (no head to run)");
-
-    clearInterval(pumpRef.current);
-    if (live.length) pumpRef.current = setInterval(pump, 50);
   }
 
   /**
@@ -506,11 +553,7 @@ function Demo({ page, onHome }) {
   }
 
   function stopDemo() {
-    audioRef.current?.pause();
-    clearInterval(pumpRef.current);
-    pumpRef.current = null;
-    setPlaying(false);
-    setStreaming(false);
+    beginOperation();
     setStatus("Stopped");
   }
 
@@ -806,6 +849,7 @@ function Demo({ page, onHome }) {
             onLoadedMetadata={(e) => setDuration(e.currentTarget.duration || 0)}
             onTimeUpdate={(e) => setPosition(e.currentTarget.currentTime)}
             onEnded={() => {
+              if (runRef.current === null) return;
               endedRef.current = true;
               if (live.length) pump();
               else { setPlaying(false); setStreaming(false); setStatus("Finished"); }
