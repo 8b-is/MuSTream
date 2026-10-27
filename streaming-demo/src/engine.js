@@ -613,11 +613,24 @@ export class MusicEngine {
    * this belongs between tracks, not mid-track.
    */
   configure(config = {}) {
-    this.config = { ...this.config, ...config };
+    // Build replacement heads with fresh carried state, sharing only the
+    // compiled sessions. No current decoder or probe is reset until every
+    // requested setting has constructed successfully.
+    const heads = new Map(this.heads);
     for (const [task, settings] of Object.entries(config)) {
-      const head = this.heads.get(task);
-      if (head?.configure) head.configure(settings);
+      const head = heads.get(task);
+      if (!head?.configure) continue;
+      const previous = task === "chord"
+        ? { selfBias: head.selfBias }
+        : { postproc: head.postproc, beatsPerBar: head.beatsPerBar };
+      const changes = Object.fromEntries(Object.entries(settings === undefined ? {} : settings)
+        .filter(([, value]) => value !== undefined));
+      const probe = new OnnxStreamer(head.probe.session, head.probe.spec);
+      heads.set(task, new HEADS[task](task, probe, head.backboneAlias,
+        { ...previous, ...changes }));
     }
+    this.heads = heads;
+    this.config = { ...this.config, ...config };
     return this.describe();
   }
 

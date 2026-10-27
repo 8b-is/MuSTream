@@ -116,7 +116,7 @@ async function getManifest(model) {
  * therefore to one fetch, one compile and one run per chunk.
  */
 async function load(wanted, wantedConfig, model) {
-  if (wantedConfig) config = { ...config, ...wantedConfig };
+  const nextConfig = wantedConfig ? { ...config, ...wantedConfig } : config;
   const m = await getManifest(model);
   const tasks = {};
   for (const task of wanted) {
@@ -129,6 +129,7 @@ async function load(wanted, wantedConfig, model) {
     if (!engine) throw new Error(
       `no exported head for ${wanted.join(", ")} -- the ${m.model} graphs have ` +
       `heads for ${Object.keys(m.tasks).join(", ") || "nothing"} (${FIX_HINT})`);
+    config = nextConfig;
     return info();
   }
 
@@ -161,8 +162,10 @@ async function load(wanted, wantedConfig, model) {
   }));
   self.postMessage({ type: "progress", loaded: 1, total: 1, compiling: true });
 
-  engine ||= new MusicEngine(SESSION, config);
-  await engine.addTasks({ graphs, tasks, config });
+  const nextEngine = engine ?? new MusicEngine(SESSION);
+  await nextEngine.addTasks({ graphs, tasks, config: nextConfig });
+  engine = nextEngine;
+  config = nextConfig;
   for (const alias of needed) loaded.add(alias);
   return info();
 }
@@ -186,9 +189,11 @@ async function handle(msg) {
   switch (msg.type) {
     case "load":
       return { type: "ready", info: await load(msg.tasks, msg.config, msg.model) };
-    case "configure":
+    case "configure": {
+      const configured = engine.configure(msg.config);
       config = { ...config, ...msg.config };
-      return { type: "ready", info: { ...engine.configure(msg.config), ...describeSession() } };
+      return { type: "ready", info: { ...configured, ...describeSession() } };
+    }
     case "reset":
       engine.reset();
       return { type: "ok" };
