@@ -137,3 +137,116 @@ test("closed streams ignore late progress and ready messages", async t => {
   assert.equal(stream.info, null);
   assert.equal(stream.onProgress, null);
 });
+
+async function loadedFixture(t) {
+  const f = fixture(t);
+  const loading = f.stream.load(["chord"]);
+  await setImmediate();
+  f.worker.reply({ seq: 1, type: "ready", info: { tasks: ["chord"] } });
+  await loading;
+  return f;
+}
+
+async function rejectConfiguration(stream, worker) {
+  const rejected = stream.configure({ chord: { selfBias: -1 } });
+  rejected.catch(() => {});
+  await setImmediate();
+  worker.reply({ seq: worker.messages.at(-1).message.seq, type: "error", message: "invalid bias" });
+  assert.equal((await outcome(rejected)).status, "rejected");
+}
+
+test("valid configure retries after ordinary rejection", async t => {
+  const { stream, worker } = await loadedFixture(t);
+  await rejectConfiguration(stream, worker);
+  const retry = stream.configure({ chord: { selfBias: 2 } });
+  retry.catch(() => {});
+  await setImmediate();
+  assert.equal(worker.messages.length, 3);
+  worker.reply({ seq: 3, type: "ready", info: { tasks: ["chord"], bias: 2 } });
+  assert.equal((await outcome(retry)).status, "fulfilled");
+  assert.equal(stream.info.bias, 2);
+});
+
+test("same-task load recovers after rejected configuration", async t => {
+  const { stream, worker } = await loadedFixture(t);
+  await rejectConfiguration(stream, worker);
+  const loading = stream.load(["chord"]);
+  loading.catch(() => {});
+  await setImmediate();
+  assert.equal(worker.messages.length, 3);
+  assert.equal(worker.messages[2].message.type, "load");
+  worker.reply({ seq: 3, type: "ready", info: { tasks: ["chord"] } });
+  assert.equal((await outcome(loading)).status, "fulfilled");
+});
+
+test("queued configure survives an earlier rejected configuration", async t => {
+  const { stream, worker } = await loadedFixture(t);
+  const first = stream.configure({ chord: { selfBias: -1 } });
+  first.catch(() => {});
+  const next = stream.configure({ chord: { selfBias: 3 } });
+  next.catch(() => {});
+  await setImmediate();
+  assert.equal(worker.messages.length, 2);
+  worker.reply({ seq: 2, type: "error", message: "invalid bias" });
+  await setImmediate();
+  assert.equal(worker.messages.length, 3);
+  assert.equal(stream.loading, next);
+  assert.equal(stream.load(["chord"]), next);
+  worker.reply({ seq: 3, type: "ready", info: { tasks: ["chord"], bias: 3 } });
+  assert.equal((await outcome(first)).status, "rejected");
+  assert.equal((await outcome(next)).status, "fulfilled");
+});
+
+test("failed configure does not clear a newer queued load", async t => {
+  const { stream, worker } = await loadedFixture(t);
+  const first = stream.configure({ chord: { selfBias: -1 } });
+  first.catch(() => {});
+  const loading = stream.load(["beat"]);
+  loading.catch(() => {});
+  await setImmediate();
+  worker.reply({ seq: 2, type: "error", message: "invalid bias" });
+  await setImmediate();
+  assert.equal(stream.loading, loading);
+  assert.equal(stream.load(["beat"]), loading);
+  assert.equal(worker.messages.length, 3);
+  worker.reply({ seq: 3, type: "ready", info: { tasks: ["chord", "beat"] } });
+  assert.equal((await outcome(loading)).status, "fulfilled");
+});
+
+test("failed load keeps the newer configure queue intact", async t => {
+  const { stream, worker } = fixture(t);
+  const loading = stream.load(["chord"]);
+  loading.catch(() => {});
+  const configuring = stream.configure({ chord: { selfBias: 2 } });
+  configuring.catch(() => {});
+  await setImmediate();
+  worker.reply({ seq: 1, type: "error", message: "load failed" });
+  await setImmediate();
+  assert.equal(stream.loading, configuring);
+  assert.equal(worker.messages.length, 2);
+  const next = stream.configure({ chord: { selfBias: 3 } });
+  next.catch(() => {});
+  await setImmediate();
+  assert.equal(worker.messages.length, 2);
+  worker.reply({ seq: 2, type: "ready", info: { tasks: [] } });
+  await setImmediate();
+  assert.equal(worker.messages.length, 3);
+  worker.reply({ seq: 3, type: "ready", info: { tasks: [] } });
+  assert.equal((await outcome(next)).status, "fulfilled");
+});
+
+test("configure recovery cannot revive a closed worker", async t => {
+  const { stream, worker } = await loadedFixture(t);
+  const first = stream.configure({ chord: { selfBias: 2 } });
+  first.catch(() => {});
+  const next = stream.configure({ chord: { selfBias: 3 } });
+  next.catch(() => {});
+  await setImmediate();
+  worker.reply({ seq: 2, type: "ready", info: { tasks: ["chord"] } });
+  stream.close();
+  assert.equal((await outcome(first)).status, "rejected");
+  assert.equal((await outcome(next)).status, "rejected");
+  assert.equal((await outcome(stream.configure({}))).status, "rejected");
+  assert.equal(worker.messages.length, 2);
+  assert.equal(stream.info, null);
+});
