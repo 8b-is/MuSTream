@@ -311,8 +311,14 @@ class RingKVCache:
         write_idx = (write_idx + end) % cap                    # [B_or_1, T]
         if self.respect_exec_mask:
             this_indexes = write_idx.view(-1, 1, T, 1).expand(B, H, T, D)
-            self.cache[0].scatter_(2, this_indexes, k)
-            self.cache[1].scatter_(2, this_indexes, v)
+            # Paused batch entries must retain their history as well as their
+            # offset. A skipped chunk can be longer than the next real chunk,
+            # so relying on the next write to replace skipped data is unsafe.
+            write_mask = exec_mask.view(B, 1, 1, 1)
+            self.cache[0].scatter_(2, this_indexes, torch.where(
+                write_mask, k, self.cache[0].gather(2, this_indexes)))
+            self.cache[1].scatter_(2, this_indexes, torch.where(
+                write_mask, v, self.cache[1].gather(2, this_indexes)))
             self.end_offset[:] = torch.where(
                 exec_mask, self.end_offset + T, self.end_offset
             )
