@@ -1,8 +1,9 @@
 """
 Inference and mir_eval evaluation for train_streaming.py checkpoints (causal streaming MERT).
 
-Modes: genuine streaming (default; one KV-cache session fed chunk by chunk,
-O(context) memory) or single_pass: true (whole track in one call; may OOM).
+Modes: chunk-by-chunk backbone streaming (default; one bounded KV-cache session)
+or single_pass: true (whole track in one call; may OOM). Evaluation retains the
+whole waveform and full-track features, so total memory grows with track length.
 
 Usage (from beat_tracking/):
   python infer_streaming.py <config.yaml> <checkpoint.pt>                      # mir_eval scores on the test split

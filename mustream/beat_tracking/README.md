@@ -108,8 +108,12 @@ Key config fields:
   - Sliding-window: `hop_duration`, `context_duration`, `lookahead`, and `mert_batch_size` (lower it on OOM).
   - Streaming: `streaming_context`.
 - `infer_streaming.py` only:
-  - `stream_chunk_duration` or `stream_chunk_frames` (speed only; results don't depend on chunk size).
+  - `stream_chunk_duration` or `stream_chunk_frames` (per-call work; results don't depend on valid chunk size).
   - `single_pass: true` runs each track as one forward call.
+
+Chunk-by-chunk extraction bounds the backbone KV cache, but evaluation retains
+the whole waveform and full-track features. Total memory therefore grows with
+track length even when `streaming_context` and chunk size stay fixed.
 
 ### Comparing post-processors on one checkpoint
 

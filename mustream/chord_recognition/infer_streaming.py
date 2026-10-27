@@ -1,8 +1,9 @@
 """Evaluate train_streaming.py checkpoints on the causal streaming MERT.
 
 Default mode feeds each song chunk by chunk through one KV-cached streaming
-session (bounded memory, matches real-time use); single_pass: true runs the
-whole song in one forward call (diagnostic; can OOM).
+session. The backbone cache is bounded, but evaluation retains the whole
+waveform and full-track features, so total memory grows with song length.
+single_pass: true runs the whole song in one forward call (diagnostic; can OOM).
 
 Usage (from chord_recognition/):
   python infer_streaming.py <config.yaml> <checkpoint.pt>                      # mir_eval scores on config['eval_split']
