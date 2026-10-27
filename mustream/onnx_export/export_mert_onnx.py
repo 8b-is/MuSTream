@@ -607,15 +607,25 @@ class MERTOnnxStreamer:
 def _report(label, a, b, tol):
     """Print and assert max|a - b| / max|b| < tol (relative to the reference's
     scale, since deep-layer activations are large)."""
+    if not np.isfinite(tol) or tol <= 0:
+        raise ValueError(f"{label}: tolerance must be positive and finite, got {tol}")
     a = np.asarray(a, dtype=np.float64)
     b = np.asarray(b, dtype=np.float64)
-    diff = float(np.abs(a - b).max())
+    if a.shape != b.shape:
+        raise AssertionError(f"{label}: shape mismatch: actual {a.shape}, reference {b.shape}")
+    if a.size == 0:
+        raise AssertionError(f"{label}: cannot compare empty arrays")
+    if not np.isfinite(a).all() or not np.isfinite(b).all():
+        raise AssertionError(f"{label}: actual and reference arrays must contain only finite values")
+    with np.errstate(over="ignore", invalid="ignore"):
+        diff = float(np.abs(a - b).max())
     scale = max(float(np.abs(b).max()), 1e-9)
     rel = diff / scale
-    status = "ok" if rel < tol else "FAILED"
+    passed = np.isfinite(rel) and rel < tol
+    status = "ok" if passed else "FAILED"
     print(f"[check] {label:<46} rel diff = {rel:.2e}  "
           f"(abs {diff:.3e}, ref max |x| = {scale:.1f})  {status}")
-    if rel >= tol:
+    if not passed:
         raise AssertionError(
             f"{label}: relative diff {rel:.3e} exceeds tolerance {tol:.1e} "
             f"(abs {diff:.3e} against a reference of scale {scale:.3f})")
