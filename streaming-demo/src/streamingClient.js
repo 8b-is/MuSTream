@@ -76,16 +76,17 @@ export class InferenceStream {
     // A previous failure must not poison a retry, and a failed attempt must
     // give its tasks back so the next call actually re-asks for them.
     const wanted = [...this.requested];
-    this.loading = (this.loading ?? Promise.resolve())
+    const loading = (this.loading ?? Promise.resolve())
       .catch(() => {})
       .then(() => this.#send({ type: "load", tasks: wanted, config, model: this.model }))
       .then((res) => this.#remember(res))
       .catch((err) => {
         for (const t of missing) this.requested.delete(t);
-        this.loading = null;
+        if (this.loading === loading) this.loading = null;
         throw err;
       });
-    return this.loading;
+    this.loading = loading;
+    return loading;
   }
 
   /** Which tasks the worker actually has a head for, once loaded. */
@@ -98,10 +99,18 @@ export class InferenceStream {
    * reloading any graph. Resets the affected head, so call it between tracks.
    */
   configure(config) {
-    this.loading = (this.loading ?? Promise.resolve())
+    // A rejected request must not poison later settings. Only clear this
+    // attempt's slot: a newer configure/load may already be waiting behind it.
+    const configuring = (this.loading ?? Promise.resolve())
+      .catch(() => {})
       .then(() => this.#send({ type: "configure", config }))
-      .then((res) => this.#remember(res));
-    return this.loading;
+      .then((res) => this.#remember(res))
+      .catch((err) => {
+        if (this.loading === configuring) this.loading = null;
+        throw err;
+      });
+    this.loading = configuring;
+    return configuring;
   }
 
   /** Start a fresh track: every graph's state is per-track by construction. */
