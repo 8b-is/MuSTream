@@ -86,9 +86,11 @@ periodic snapshots. To evaluate, pass the run's own `logs/<run_name>/config.yaml
   causal at hop granularity (latency is one hop), but each sample is encoded
   `context_duration / hop_duration` times, so it is expensive.
 - **Causal streaming**: a causal MERT with a rolling KV cache
-  (`streaming_context` frames) that is fed chunk by chunk in one session. Memory
-  is O(context), and you get a prediction for every frame (or every 15-frame
-  block for the block-causal MuSTream backbones). Chunk size only affects speed.
+  (`streaming_context` frames) that is fed chunk by chunk in one session. The
+  backbone cache is O(context), but the evaluation helper retains the whole
+  waveform and full-track features, so total memory grows with track length.
+  It computes a prediction for every frame (or every 15-frame block for the
+  block-causal MuSTream backbones). Chunk size affects per-call work.
 
 ### Train
 

@@ -599,10 +599,12 @@ def extract_streaming_features_streaming(
     hop_size: int,
     chunk_raw_frames: int,
 ) -> torch.Tensor:
-    """Chunk-by-chunk extraction in one persistent .streaming() session (O(context) memory).
+    """Chunk-by-chunk extraction in one persistent .streaming() session.
 
-    chunk_raw_frames only affects speed; it must be a multiple of the backbone's
-    lookahead_block.
+    The backbone KV cache is O(context), but this helper retains the whole
+    waveform and all hidden chunks before returning pooled full-track features.
+    Total memory therefore grows with track length, even at a fixed chunk size.
+    chunk_raw_frames must be a multiple of the backbone's lookahead_block.
     """
     waveform = audio[:, 0, :].to(device)  # [B, T_samples]
     B, total_samples = waveform.shape

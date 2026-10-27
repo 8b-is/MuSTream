@@ -79,8 +79,10 @@ Point `split_dir` / `vocab_path` in the config elsewhere if needed.
 - **Causal streaming** (`train_streaming.py`, `config/MERT_streaming.yaml`):
   MuSTream, the causal KV-cache streaming backbone (`modeling/streaming/streaming_mert.py`), so
   frame *t* only depends on audio up to *t*. Inference feeds the song chunk by
-  chunk with bounded memory (`streaming_context` frames of history); latency is
-  the backbone's own frame/block latency. `mert_align_checkpoint` (optional for
+  chunk with a bounded backbone cache (`streaming_context` frames of history).
+  The evaluation helper retains the whole waveform and full-track features, so
+  total memory grows with song length. The backbone's causal latency is its own
+  frame/block latency. `mert_align_checkpoint` (optional for
   330M/95M) loads the causally distilled weights; `backbone_positional_embedding`
   must match that checkpoint (use `rope`).
 
