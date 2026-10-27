@@ -94,7 +94,13 @@ export class OnnxStreamer {
 
   static async create(model, spec, sessionOptions) {
     const session = await ort.InferenceSession.create(model, sessionOptions);
-    return new OnnxStreamer(session, spec);
+    try {
+      return new OnnxStreamer(session, spec);
+    } catch (err) {
+      // The runtime session exists even if invalid metadata prevents wrapping it.
+      try { await session.release(); } catch {}
+      throw err;
+    }
   }
 
   /** Start a fresh track. Carrying any graph's state across tracks would let
@@ -542,33 +548,57 @@ export class MusicEngine {
    * `tasks`:  {task: {backbone: alias, probe: alias}}.
    */
   async addTasks({ graphs, tasks, config }) {
-    if (config) this.config = { ...this.config, ...config };
-    for (const alias of new Set(Object.values(tasks).map((p) => p.backbone))) {
-      if (this.backbones.has(alias)) continue;                      // already up
-      if (!graphs[alias]) throw new Error(`no graph was supplied for backbone "${alias}"`);
-      this.backbones.set(alias,
-        await OnnxStreamer.create(graphs[alias].model, graphs[alias].spec, this.sessionOptions));
-    }
-    for (const [task, pair] of Object.entries(tasks)) {
-      if (this.heads.has(task)) continue;
-      const backbone = this.backbones.get(pair.backbone);
-      if (!backbone) throw new Error(`${task}: no backbone graph "${pair.backbone}" was loaded`);
-      const probe = await OnnxStreamer.create(
-        graphs[pair.probe].model, graphs[pair.probe].spec, this.sessionOptions);
-      const warning = checkPair(task, backbone, probe);
-      if (warning) this.warnings.push(warning);
-      const Ctor = HEADS[task];
-      this.heads.set(task, new Ctor(task, probe, pair.backbone, this.config[task]));
-
-      const b = backbone.spec;
-      if (this.sampleRate === null) {
-        this.sampleRate = b.sample_rate;
-        this.chunkSamples = b.chunk_samples;
-      } else if (this.sampleRate !== b.sample_rate || this.chunkSamples !== b.chunk_samples) {
-        throw new Error("the tasks' backbones disagree on the chunk geometry; they cannot " +
-                        "share one audio stream");
+    // Stage the whole addition. Publishing a head before geometry/decoder
+    // validation made a rejected task look loaded on retry, bypassing the check.
+    const nextConfig = config ? { ...this.config, ...config } : this.config;
+    const backbones = new Map(this.backbones);
+    const heads = new Map(this.heads);
+    const warnings = [...this.warnings];
+    let sampleRate = this.sampleRate;
+    let chunkSamples = this.chunkSamples;
+    const additions = Object.entries(tasks).filter(([task]) => !heads.has(task));
+    const created = [];
+    const create = async (graph) => {
+      const streamer = await OnnxStreamer.create(graph.model, graph.spec, this.sessionOptions);
+      created.push(streamer);
+      return streamer;
+    };
+    try {
+      for (const alias of new Set(additions.map(([, pair]) => pair.backbone))) {
+        if (backbones.has(alias)) continue;
+        if (!graphs[alias]) throw new Error(`no graph was supplied for backbone "${alias}"`);
+        backbones.set(alias, await create(graphs[alias]));
       }
+      for (const [task, pair] of additions) {
+        const backbone = backbones.get(pair.backbone);
+        if (!backbone) throw new Error(`${task}: no backbone graph "${pair.backbone}" was loaded`);
+        const probe = await create(graphs[pair.probe]);
+        const warning = checkPair(task, backbone, probe);
+        if (warning) warnings.push(warning);
+        const Ctor = HEADS[task];
+        heads.set(task, new Ctor(task, probe, pair.backbone, nextConfig[task]));
+
+        const b = backbone.spec;
+        if (sampleRate === null) {
+          sampleRate = b.sample_rate;
+          chunkSamples = b.chunk_samples;
+        } else if (sampleRate !== b.sample_rate || chunkSamples !== b.chunk_samples) {
+          throw new Error("the tasks' backbones disagree on the chunk geometry; they cannot " +
+                          "share one audio stream");
+        }
+      }
+    } catch (err) {
+      // Only this attempt's sessions belong to us; keep working tasks intact.
+      // Cleanup failures must not hide the cause or skip another release.
+      await Promise.allSettled(created.map(async (g) => g.session.release()));
+      throw err;
     }
+    this.config = nextConfig;
+    this.backbones = backbones;
+    this.heads = heads;
+    this.warnings = warnings;
+    this.sampleRate = sampleRate;
+    this.chunkSamples = chunkSamples;
     this.reset();
     return this.describe();
   }
