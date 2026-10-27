@@ -147,3 +147,70 @@ test("successful additions share backbones, reset tracks, and remain idempotent"
   assert.equal(sessions.length, 3);
   assert.ok(sessions.every(s => s.released === 0));
 });
+
+async function loadDecoders(engine, logitsOnly = false) {
+  const chord = graph("chord");
+  if (logitsOnly) delete chord.spec.tags_output;
+  await engine.addTasks({ graphs: { shared: graph(), chord, beat: graph("beat") },
+    tasks: { chord: { backbone: "shared", probe: "chord" }, beat: { backbone: "shared", probe: "beat" } },
+    config: { chord: { selfBias: 2 }, beat: { postproc: "minimal", beatsPerBar: 3 } } });
+  for (const head of engine.heads.values()) {
+    head.frames = 9;
+    head.probe.state.cache.data[0] = 11;
+  }
+}
+
+test("rejected chord mode preserves decoder, settings and probe state", async t => {
+  const { engine } = await fixture(t);
+  await loadDecoders(engine, true);
+  const before = snapshot(engine);
+  const head = engine.heads.get("chord"), crf = head.crf, state = head.probe.state;
+  assert.throws(() => engine.configure({ chord: { selfBias: null } }), /no CRF/);
+  assert.deepEqual(snapshot(engine), before);
+  assert.equal(engine.heads.get("chord"), head);
+  assert.equal(head.crf, crf);
+  assert.equal(head.probe.state, state);
+  assert.equal(state.cache.data[0], 11);
+  engine.configure({ chord: { selfBias: 3 } });
+  assert.equal(engine.describe().heads.chord.selfBias, 3);
+});
+
+test("late configuration rejection cannot reset an earlier head", async t => {
+  const { engine } = await fixture(t);
+  await loadDecoders(engine);
+  const before = snapshot(engine);
+  const beat = engine.heads.get("beat"), tracker = beat.tracker, state = beat.probe.state;
+  assert.throws(() => engine.configure({ beat: { beatsPerBar: 4 }, chord: { selfBias: -1 } }), /selfBias/);
+  assert.deepEqual(snapshot(engine), before);
+  assert.equal(engine.heads.get("beat"), beat);
+  assert.equal(beat.tracker, tracker);
+  assert.equal(beat.probe.state, state);
+  assert.equal(state.cache.data[0], 11);
+});
+
+test("successful partial settings preserve other choices and share compiled sessions", async t => {
+  const { engine, sessions } = await fixture(t);
+  await loadDecoders(engine);
+  const chord = engine.heads.get("chord"), beat = engine.heads.get("beat");
+  const count = sessions.length;
+  engine.configure({ beat: { beatsPerBar: 4 } });
+  const updated = engine.heads.get("beat");
+  assert.equal(updated.postproc, "minimal");
+  assert.equal(updated.beatsPerBar, 4);
+  assert.equal(updated.frames, 0);
+  assert.equal(updated.probe.state.cache.data[0], 0);
+  assert.equal(updated.probe.session, beat.probe.session);
+  assert.equal(engine.heads.get("chord"), chord);
+  assert.equal(chord.frames, 9);
+  assert.equal(sessions.length, count);
+  assert.ok(sessions.every(s => s.released === 0));
+  engine.configure({ beat: { postproc: undefined, beatsPerBar: undefined } });
+  assert.equal(engine.describe().heads.beat.postproc, "minimal");
+  assert.equal(engine.describe().heads.beat.beatsPerBar, 4);
+  assert.throws(() => engine.configure({ beat: null }), TypeError);
+  assert.equal(engine.describe().heads.beat.beatsPerBar, 4);
+  engine.configure({ chord: { selfBias: null } });
+  assert.equal(engine.describe().heads.chord.decodedBy, "graph");
+  engine.configure({ chord: { selfBias: 2 } });
+  assert.equal(engine.describe().heads.chord.decodedBy, "host");
+});
