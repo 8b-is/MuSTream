@@ -139,10 +139,14 @@ class StreamingKeyExtractor(_BaseKeyExtractor):
         frame_idx, consumed_raw = streaming_readout_schedule(
             n_frames, self.pool_factor, self.lookahead_block, target_raw_frames)
         if self.readout_stride is not None and self.readout_stride > 1:
-            # Thin the schedule, always keeping the last (whole-track) readout.
-            keep = np.arange(self.readout_stride - 1, len(frame_idx), self.readout_stride)
-            if keep.size == 0 or keep[-1] != len(frame_idx) - 1:
-                keep = np.append(keep, len(frame_idx) - 1)
+            # The stride counts pooled frames, not entries in the block-causal
+            # schedule. Select the first available readout at/after each target
+            # audio time; several targets may land in the same block.
+            raw_stride = self.readout_stride * self.pool_factor
+            targets = np.arange(raw_stride, consumed_raw[-1] + 1, raw_stride)
+            keep = np.searchsorted(consumed_raw, targets)
+            # Always keep the final (whole-track) readout, without duplicates.
+            keep = np.unique(np.append(keep, len(frame_idx) - 1))
             frame_idx, consumed_raw = frame_idx[keep], consumed_raw[keep]
 
         times = consumed_raw * (self.hop_size / self.sample_rate)
