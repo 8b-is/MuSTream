@@ -22,7 +22,7 @@
  * and every backbone records the one it was exported from, so a mis-pairing is
  * a link-time error instead of a silently wrong demo.
  */
-import { existsSync, lstatSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -94,17 +94,34 @@ if (!arg && current === choice && existsSync(MANIFEST)) {
 }
 
 const model = MODELS[choice];
-mkdirSync(OUT, { recursive: true });
+const extensions = [".onnx", ".json"];
+const links = [];
+const removals = [];
+
+function available(base) {
+  return extensions.every(ext => existsSync(base + ext));
+}
+
+function inspect(base) {
+  for (const ext of extensions) {
+    if (!statSync(base + ext).isFile()) {
+      throw new Error(`[models] expected a file: ${path.relative(DEMO, base + ext)}`);
+    }
+  }
+  const metadata = spec(base);
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) {
+    throw new Error(`[models] expected a metadata object: ${path.relative(DEMO, base)}.json`);
+  }
+  return metadata;
+}
 
 function link(base, name) {
-  for (const ext of [".onnx", ".json"]) {
+  for (const ext of extensions) {
     const src = base + ext;
     const dst = path.join(OUT, name + ext);
-    if (!existsSync(src)) return false;
     try { lstatSync(dst); rmSync(dst, { force: true }); } catch {}
     symlinkSync(path.relative(OUT, src), dst);
   }
-  return true;
 }
 
 const graphs = {};
@@ -112,12 +129,13 @@ const tasks = {};
 const missing = [];
 
 for (const [family, base] of Object.entries(model.backbones)) {
-  if (!link(base, alias[family])) {
-    console.error(`[models] missing backbone: ${path.relative(DEMO, base)}.onnx`);
+  if (!available(base)) {
+    console.error(`[models] missing backbone graph or metadata: ${path.relative(DEMO, base)}.{onnx,json}`);
     console.error("[models] export it first (export_mert_onnx.py)");
     process.exit(1);
   }
-  const s = spec(base);
+  const s = inspect(base);
+  links.push([base, alias[family]]);
   graphs[alias[family]] = {
     file: `${alias[family]}.onnx`,
     bytes: statSync(base + ".onnx").size,
@@ -130,17 +148,15 @@ for (const [family, base] of Object.entries(model.backbones)) {
 
 for (const [task, pair] of Object.entries(model.tasks)) {
   const name = probeAlias(task);
-  if (!link(pair.probe, name)) {
+  if (!available(pair.probe)) {
     // A task whose head has not been exported is left out of the manifest, and
     // the UI says so rather than showing invented numbers.
     missing.push(task);
-    for (const ext of [".onnx", ".json"]) {
-      try { lstatSync(path.join(OUT, name + ext)); rmSync(path.join(OUT, name + ext), { force: true }); } catch {}
-    }
+    removals.push(name);
     console.warn(`[models] ${task}: no probe exported (${path.relative(DEMO, pair.probe)}.onnx)`);
     continue;
   }
-  const s = spec(pair.probe);
+  const s = inspect(pair.probe);
   const backbone = graphs[alias[pair.backbone]];
   // The check no shape comparison can make: a probe reads whatever tensor it is
   // handed, so the only thing that catches the r0/r15 families being crossed is
@@ -151,6 +167,7 @@ for (const [task, pair] of Object.entries(model.tasks)) {
     console.error("[models] these are different weights -- fix the pairing in this script");
     process.exit(1);
   }
+  links.push([pair.probe, name]);
   graphs[name] = {
     file: `${name}.onnx`,
     bytes: statSync(pair.probe + ".onnx").size,
@@ -169,6 +186,17 @@ for (const name of Object.keys(graphs)) {
     delete graphs[name];
 }
 
-writeFileSync(MANIFEST, JSON.stringify({ model: choice, tasks, graphs, missing }, null, 2) + "\n");
+// Validate the entire selection before touching the working model. A bad late
+// probe must not leave new aliases paired with the previous model's manifest.
+// This does not roll back filesystem failures or concurrent checkpoint edits.
+const manifest = JSON.stringify({ model: choice, tasks, graphs, missing }, null, 2) + "\n";
+mkdirSync(OUT, { recursive: true });
+for (const [base, name] of links) link(base, name);
+for (const name of removals) {
+  for (const ext of extensions) {
+    try { lstatSync(path.join(OUT, name + ext)); rmSync(path.join(OUT, name + ext), { force: true }); } catch {}
+  }
+}
+writeFileSync(MANIFEST, manifest);
 console.log(`[models] -> ${path.relative(DEMO, MANIFEST)}: ${Object.keys(tasks).join(", ")}` +
             (missing.length ? ` (no head for ${missing.join(", ")})` : ""));
